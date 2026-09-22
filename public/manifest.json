@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Copilot Connection Experiment",
+  "version": "0.1.0",
+  "description": "Private experiment for direct GitHub Copilot access. Unofficial; compatibility is unverified.",
+  "minimum_chrome_version": "120",
+  "permissions": ["sidePanel"],
+  "host_permissions": [
+    "https://api.github.com/*",
+    "https://api.githubcopilot.com/*",
+    "https://api.business.githubcopilot.com/*",
+    "https://api.enterprise.githubcopilot.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open connection experiment"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "incognito": "not_allowed",
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src https://api.github.com https://api.githubcopilot.com https://api.business.githubcopilot.com https://api.enterprise.githubcopilot.com; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
+  }
+}
