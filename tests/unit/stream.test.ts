@@ -9,6 +9,16 @@ async function collect(response: Response, signal = new AbortController().signal
 }
 
 describe("bounded completion stream", () => {
+  it.each([
+    "Text/Event-Stream; charset=utf-8",
+    "TEXT/EVENT-STREAM",
+    " text/Event-stream ; charset=UTF-8 ",
+  ])("accepts case-insensitive SSE media types: %s", async (contentType) => {
+    const response = streamResponse(delta("OK") + done);
+    response.headers.set("content-type", contentType);
+    await expect(collect(response)).resolves.toBe("OK");
+  });
+
   it("handles split UTF-8, CRLF, comments, role-only events, and a final stop", async () => {
     const text = ": heartbeat\n\n" +
       event({ choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] }) +

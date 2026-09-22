@@ -33,7 +33,7 @@ async function* readEvents(response: Response, signal: AbortSignal) {
 }
 
 export async function* readCompletion(response: Response, signal: AbortSignal) {
-  if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "text/event-stream") {
+  if (response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "text/event-stream") {
     await response.body?.cancel();
     throw new ProbeError("stream", "The endpoint did not return an event stream.");
   }
