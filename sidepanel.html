@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Copilot Connection Experiment</title>
+    <script type="module" src="/src/sidepanel/index.ts"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Connection experiment</h1>
+        <p>Can Chrome reach GitHub Copilot directly?</p>
+        <p class="disclosure">This private, unofficial prototype explores extension-only access.
+          PAT compatibility is <strong>not yet verified</strong>; page capture is outside its scope.</p>
+      </header>
+
+      <section aria-labelledby="offline-heading">
+        <h2 id="offline-heading">Start without a token</h2>
+        <p>Check the interface and streaming with synthetic data entirely offline.
+          A successful demo does not establish Copilot access.</p>
+        <button id="demo" type="button">Run offline demo</button>
+      </section>
+
+      <section aria-labelledby="auth-heading">
+        <h2 id="auth-heading">Check a PAT</h2>
+        <p>Use a fresh, expiring fine-grained PAT with your personal account as resource owner and
+          <strong>Copilot Requests</strong> permission only.</p>
+        <p id="credential-note">The token stays in this panel's memory. Closing or reloading the panel clears it.
+          Never paste it into chat or an issue.</p>
+        <form id="auth-form">
+          <label for="pat">Fine-grained PAT</label>
+          <input id="pat" type="password" autocomplete="off" spellcheck="false"
+            autocapitalize="off" maxlength="511" aria-describedby="credential-note">
+          <label class="consent">
+            <input id="auth-consent" type="checkbox">
+            <span>I authorize sending this PAT to <code>api.github.com</code> for token exchange,
+              then contacting allowlisted Copilot APIs for model discovery. No prompt is sent.</span>
+          </label>
+          <button id="connect" type="submit" disabled>Check PAT (live)</button>
+        </form>
+      </section>
+
+      <section aria-labelledby="inference-heading">
+        <h2 id="inference-heading">Try one response</h2>
+        <p>Only models explicitly marked enabled and compatible with Chat Completions are offered.
+          A discovery failure stops the experiment; it does not trigger another authentication method.</p>
+        <label for="model">Enabled Chat Completions model</label>
+        <select id="model" disabled>
+          <option value="">Check your PAT first</option>
+        </select>
+        <p class="prompt-label">The entire outgoing prompt:</p>
+        <pre id="prompt"></pre>
+        <label class="consent">
+          <input id="inference-consent" type="checkbox" disabled>
+          <span>I approve one live inference request using my Copilot allowance.
+            Stopping may not prevent server-side work or charges.</span>
+        </label>
+        <button id="send" type="button" disabled>Send test prompt (live)</button>
+      </section>
+
+      <section class="results" aria-labelledby="result-heading">
+        <div class="section-heading">
+          <h2 id="result-heading">Result</h2>
+          <button id="stop" class="secondary" type="button" disabled>Stop</button>
+        </div>
+        <p id="status" role="status">Not connected. Start with the offline demo.</p>
+        <p id="error" role="alert" hidden></p>
+        <pre id="output" aria-label="Response output" tabindex="0">No response yet.</pre>
+        <button id="clear" class="secondary" type="button">Clear credentials and output</button>
+      </section>
+      <footer>
+        <p>GitHub processes live requests under its account policies and data-handling terms.
+          Clearing here does not delete data already sent to GitHub.</p>
+        <p>This project is not affiliated with GitHub. Analytics, persistent credential storage,
+          and automatic retries are disabled.</p>
+      </footer>
+    </main>
+  </body>
+</html>
