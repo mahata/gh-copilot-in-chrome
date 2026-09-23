@@ -44,6 +44,7 @@ async function openPanel({ withCompanion = true, savedToken }: PanelSetup = {}):
       home,
       nodePath: process.execPath,
       companionEntryPath: fakeCompanionPath,
+      store: { forgetToken: async () => false },
       output: { log: () => {}, error: () => {} },
     });
   };

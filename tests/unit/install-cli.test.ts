@@ -40,7 +40,9 @@ describe("companion installer command", { timeout: 15_000 }, () => {
     companion.stdin.end();
     await expect(exitCode).resolves.toBe(0);
 
-    expect(runInstallCli(["--uninstall"]).status).toBe(0);
+    const uninstalled = runInstallCli(["--uninstall"]);
+    expect(uninstalled.status).toBe(0);
+    expect(uninstalled.stdout).toContain("No saved PAT was found in your macOS login keychain.");
     expect(existsSync(launcherPath)).toBe(false);
     expect(existsSync(hostManifestPath)).toBe(false);
   });
