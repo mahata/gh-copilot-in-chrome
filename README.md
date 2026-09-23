@@ -109,7 +109,7 @@ CI.
 3. Check that the Keychain item exists. This command prints its attributes but not the PAT:
 
    ```sh
-   security find-generic-password -s io.github.mahata.gh_copilot_in_chrome -a fine-grained-pat
+   security find-generic-password -s io.github.mahata.gh_copilot_in_chrome -a fine-grained-pat login.keychain
    ```
 
 4. Send a short prompt, then a follow-up that depends on the reply. Switch models, send
@@ -170,6 +170,9 @@ The companion:
   list; stop; start a new chat; and forget the saved PAT.
 - Keeps a saved PAT as a generic password item in your login keychain, with service
   `io.github.mahata.gh_copilot_in_chrome` and account `fine-grained-pat`:
+  - It names the login keychain (`login.keychain`) in every `security` command, so a
+    different default keychain or search list does not change where it saves, reads or
+    deletes the PAT.
   - It saves the PAT only when **Remember** is checked and GitHub has accepted it,
     replacing any earlier one.
   - At startup it checks only whether the item exists. It reads the PAT only to connect
@@ -300,4 +303,6 @@ The code is organized as:
 - [Chrome native messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging)
   and [the manifest `key`](https://developer.chrome.com/docs/extensions/reference/manifest/key).
 - `man security`, under `add-generic-password`: `-U` replaces an existing item, and by
-  default the application that creates an item is trusted to read it without warning.
+  default the application that creates an item is trusted to read it without warning. The
+  add, find and delete commands also take a keychain argument, and the page's examples name
+  the login keychain `login.keychain`.

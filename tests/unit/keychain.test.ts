@@ -7,6 +7,7 @@ import type { SecurityResult, SecurityRunner } from "../../src/companion/keychai
 
 const token = `github_pat_${"K".repeat(82)}`;
 const itemArguments = ["-s", "io.github.mahata.gh_copilot_in_chrome", "-a", "fine-grained-pat"];
+const loginKeychain = "login.keychain";
 
 function fakeSecurity(result: Partial<SecurityResult>) {
   return vi.fn<SecurityRunner>(async () => ({ exitCode: 0, output: "", ...result }));
@@ -14,10 +15,10 @@ function fakeSecurity(result: Partial<SecurityResult>) {
 
 describe("keychain credential store", () => {
   describe("hasSavedToken", () => {
-    it("looks up the item's attributes without reading its secret", async () => {
+    it("looks up the item's attributes in the login keychain without reading its secret", async () => {
       const runSecurity = fakeSecurity({ exitCode: 0, output: 'keychain: "/Users/octocat/Library/Keychains/login.keychain-db"\n' });
       await expect(createKeychainStore(runSecurity).hasSavedToken()).resolves.toBe(true);
-      expect(runSecurity).toHaveBeenCalledExactlyOnceWith(["find-generic-password", ...itemArguments]);
+      expect(runSecurity).toHaveBeenCalledExactlyOnceWith(["find-generic-password", ...itemArguments, loginKeychain]);
     });
 
     it.each([
@@ -30,10 +31,10 @@ describe("keychain credential store", () => {
   });
 
   describe("loadToken", () => {
-    it("reads the secret and drops the trailing newline", async () => {
+    it("reads the secret from the login keychain and drops the trailing newline", async () => {
       const runSecurity = fakeSecurity({ exitCode: 0, output: `${token}\n` });
       await expect(createKeychainStore(runSecurity).loadToken()).resolves.toBe(token);
-      expect(runSecurity).toHaveBeenCalledExactlyOnceWith(["find-generic-password", ...itemArguments, "-w"]);
+      expect(runSecurity).toHaveBeenCalledExactlyOnceWith(["find-generic-password", ...itemArguments, "-w", loginKeychain]);
     });
 
     it("returns nothing when no item exists", async () => {
@@ -56,12 +57,12 @@ describe("keychain credential store", () => {
   });
 
   describe("saveToken", () => {
-    it("writes the token through the tool's standard input, never its arguments", async () => {
+    it("writes the token into the login keychain through the tool's standard input, never its arguments", async () => {
       const runSecurity = fakeSecurity({ exitCode: 0 });
       await createKeychainStore(runSecurity).saveToken(token);
       expect(runSecurity).toHaveBeenCalledExactlyOnceWith(
         ["-i"],
-        `add-generic-password -U -s io.github.mahata.gh_copilot_in_chrome -a fine-grained-pat -w ${token}\n`,
+        `add-generic-password -U -s io.github.mahata.gh_copilot_in_chrome -a fine-grained-pat -w ${token} ${loginKeychain}\n`,
       );
     });
 
@@ -82,10 +83,10 @@ describe("keychain credential store", () => {
   });
 
   describe("forgetToken", () => {
-    it("deletes the item and reports that it removed one", async () => {
+    it("deletes the item from the login keychain and reports that it removed one", async () => {
       const runSecurity = fakeSecurity({ exitCode: 0 });
       await expect(createKeychainStore(runSecurity).forgetToken()).resolves.toBe(true);
-      expect(runSecurity).toHaveBeenCalledExactlyOnceWith(["delete-generic-password", ...itemArguments]);
+      expect(runSecurity).toHaveBeenCalledExactlyOnceWith(["delete-generic-password", ...itemArguments, loginKeychain]);
     });
 
     it("reports that nothing was removed when no item exists", async () => {

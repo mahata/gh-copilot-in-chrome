@@ -10,6 +10,7 @@ const SECURITY_TIMEOUT_MS = 10_000;
 const SECURITY_PATH = "/usr/bin/security";
 const ITEM_NOT_FOUND_EXIT_CODE = 44;
 const ITEM_ARGUMENTS = ["-s", HOST_NAME, "-a", "fine-grained-pat"];
+const LOGIN_KEYCHAIN = "login.keychain";
 
 export type SecurityResult = { exitCode: number | null; output: string };
 export type SecurityRunner = (args: readonly string[], input?: string) => Promise<SecurityResult>;
@@ -24,12 +25,12 @@ export type CredentialStore = {
 export function createKeychainStore(runSecurity: SecurityRunner = createSecurityRunner()): CredentialStore {
   return {
     async hasSavedToken() {
-      const { exitCode } = await runSecurity(["find-generic-password", ...ITEM_ARGUMENTS]);
+      const { exitCode } = await runSecurity(["find-generic-password", ...ITEM_ARGUMENTS, LOGIN_KEYCHAIN]);
       return exitCode === 0;
     },
 
     async loadToken() {
-      const { exitCode, output } = await runSecurity(["find-generic-password", ...ITEM_ARGUMENTS, "-w"]);
+      const { exitCode, output } = await runSecurity(["find-generic-password", ...ITEM_ARGUMENTS, "-w", LOGIN_KEYCHAIN]);
       if (exitCode === ITEM_NOT_FOUND_EXIT_CODE) return undefined;
       const savedToken = output.endsWith("\n") ? output.slice(0, -1) : output;
       if (exitCode !== 0 || !isFineGrainedPersonalAccessToken(savedToken)) {
@@ -40,12 +41,15 @@ export function createKeychainStore(runSecurity: SecurityRunner = createSecurity
 
     async saveToken(token) {
       if (!isFineGrainedPersonalAccessToken(token)) throw new Error("Only a fine-grained PAT can be saved.");
-      const { exitCode } = await runSecurity(["-i"], `add-generic-password -U ${ITEM_ARGUMENTS.join(" ")} -w ${token}\n`);
+      const { exitCode } = await runSecurity(
+        ["-i"],
+        `add-generic-password -U ${ITEM_ARGUMENTS.join(" ")} -w ${token} ${LOGIN_KEYCHAIN}\n`,
+      );
       if (exitCode !== 0) throw new Error("The PAT could not be saved to the macOS Keychain.");
     },
 
     async forgetToken() {
-      const { exitCode } = await runSecurity(["delete-generic-password", ...ITEM_ARGUMENTS]);
+      const { exitCode } = await runSecurity(["delete-generic-password", ...ITEM_ARGUMENTS, LOGIN_KEYCHAIN]);
       if (exitCode === ITEM_NOT_FOUND_EXIT_CODE) return false;
       if (exitCode !== 0) throw new Error("The saved PAT could not be removed from the macOS Keychain.");
       return true;
