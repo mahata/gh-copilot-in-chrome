@@ -65,7 +65,7 @@ export function parsePanelMessage(value: unknown): PanelMessage | undefined {
         ? { type: "connect", token: value.token }
         : undefined;
     case "send":
-      return hasExactlyKeys(value, ["type", "model"]) && isBoundedText(value.model, MAX_FIELD_LENGTH)
+      return hasExactlyKeys(value, ["type", "model"]) && isBoundedField(value.model)
         ? { type: "send", model: value.model }
         : undefined;
     case "stop":
@@ -81,7 +81,7 @@ export function parseCompanionMessage(value: unknown): CompanionMessage | undefi
     case "hello":
       return hasExactlyKeys(value, ["type", "protocolVersion", "sdkVersion"]) &&
         isInteger(value.protocolVersion) &&
-        isBoundedText(value.sdkVersion, MAX_FIELD_LENGTH)
+        isBoundedField(value.sdkVersion)
         ? { type: "hello", protocolVersion: value.protocolVersion, sdkVersion: value.sdkVersion }
         : undefined;
     case "connected":
@@ -109,18 +109,18 @@ function parseConnected(value: JsonObject): CompanionMessage | undefined {
   const models = value.models.map(parseModel);
   if (!models.every((model): model is ModelSummary => model !== undefined)) return undefined;
   if (value.login === undefined) return { type: "connected", models };
-  return isBoundedText(value.login, MAX_FIELD_LENGTH) ? { type: "connected", login: value.login, models } : undefined;
+  return isBoundedField(value.login) ? { type: "connected", login: value.login, models } : undefined;
 }
 
 function parseModel(value: unknown): ModelSummary | undefined {
   if (!isJsonObject(value) || !hasExactlyKeys(value, ["id", "name"], ["multiplier"])) return undefined;
-  if (!isBoundedText(value.id, MAX_FIELD_LENGTH) || !isBoundedText(value.name, MAX_FIELD_LENGTH)) return undefined;
+  if (!isBoundedField(value.id) || !isBoundedField(value.name)) return undefined;
   if (value.multiplier === undefined) return { id: value.id, name: value.name };
   return isNonNegativeNumber(value.multiplier) ? { id: value.id, name: value.name, multiplier: value.multiplier } : undefined;
 }
 
 function parseUsage(value: JsonObject): CompanionMessage | undefined {
-  if (!hasExactlyKeys(value, ["type", "model"], ["cost"]) || !isBoundedText(value.model, MAX_FIELD_LENGTH)) {
+  if (!hasExactlyKeys(value, ["type", "model"], ["cost"]) || !isBoundedField(value.model)) {
     return undefined;
   }
   if (value.cost === undefined) return { type: "usage", model: value.model };
@@ -145,16 +145,20 @@ function hasExactlyKeys(value: JsonObject, required: readonly string[], optional
   return required.every((key) => keys.includes(key)) && keys.every((key) => required.includes(key) || optional.includes(key));
 }
 
+export function isBoundedField(value: unknown): value is string {
+  return isBoundedText(value, MAX_FIELD_LENGTH);
+}
+
+export function isNonNegativeNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
 function isBoundedText(value: unknown, maxLength: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= maxLength;
 }
 
 function isInteger(value: unknown): value is number {
   return Number.isInteger(value);
-}
-
-function isNonNegativeNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
 function isOneOf<Option extends string>(value: unknown, options: readonly Option[]): value is Option {
