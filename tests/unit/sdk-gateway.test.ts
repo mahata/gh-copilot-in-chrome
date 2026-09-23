@@ -125,7 +125,7 @@ describe("connect", () => {
 
     expect(client.options).toEqual({
       mode: "empty",
-      connection: { kind: "stdio", env: { HOME: home, TMPDIR: home, PATH: "/usr/bin:/bin:/usr/sbin:/sbin" } },
+      connection: { kind: "stdio", env: { HOME: home, TMPDIR: home, COPILOT_HOME: home, PATH: "/usr/bin:/bin:/usr/sbin:/sbin" } },
       baseDirectory: home,
       workingDirectory: home,
       gitHubToken: token,

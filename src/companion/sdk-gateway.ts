@@ -37,7 +37,7 @@ export function createSdkGateway(): CopilotGateway {
       privateHome = home;
       const startingClient = new CopilotClient({
         mode: "empty",
-        connection: RuntimeConnection.forStdio({ env: { HOME: home, TMPDIR: home, PATH: SYSTEM_PATH } }),
+        connection: RuntimeConnection.forStdio({ env: { HOME: home, TMPDIR: home, COPILOT_HOME: home, PATH: SYSTEM_PATH } }),
         baseDirectory: home,
         workingDirectory: home,
         gitHubToken: token,
