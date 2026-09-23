@@ -9,6 +9,7 @@ import type { ModelSummary, TurnOutcome } from "../protocol/messages.ts";
 
 const APPLICATION_NAME = "gh-copilot-in-chrome";
 const SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+export const GRACEFUL_STOP_TIMEOUT_MS = 5_000;
 
 const TURN_FAILURE_BY_ERROR_TYPE = new Map<string, TurnFailureCode>([
   ["authentication", "auth_failed"],
@@ -166,11 +167,20 @@ async function attempt<Value>(operation: () => Promise<Value>, failureCode: Gate
 }
 
 async function stopClient(client: CopilotClient) {
-  const stoppedCleanly = await client.stop().then(
+  const gracefulStop = client.stop().then(
     (cleanupErrors) => cleanupErrors.length === 0,
     () => false,
   );
+  const stoppedCleanly = await withDeadline(gracefulStop, GRACEFUL_STOP_TIMEOUT_MS, false);
   if (!stoppedCleanly) await client.forceStop().catch(() => undefined);
+}
+
+function withDeadline<Value>(operation: Promise<Value>, timeoutMs: number, valueAfterTimeout: Value) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<Value>((resolve) => {
+    timer = setTimeout(() => resolve(valueAfterTimeout), timeoutMs);
+  });
+  return Promise.race([operation, timeout]).finally(() => clearTimeout(timer));
 }
 
 async function removeDirectory(directory: string) {

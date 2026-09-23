@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayFailure } from "../../src/companion/gateway.ts";
 import type { TurnEvent } from "../../src/companion/gateway.ts";
-import { createSdkGateway } from "../../src/companion/sdk-gateway.ts";
+import { createSdkGateway, GRACEFUL_STOP_TIMEOUT_MS } from "../../src/companion/sdk-gateway.ts";
 import { MAX_MODELS } from "../../src/protocol/messages.ts";
 
 const sdk = vi.hoisted(() => {
@@ -112,6 +112,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
 });
 
@@ -333,5 +334,26 @@ describe("close", () => {
     await gateway.close();
     expect(client.forceStop).toHaveBeenCalledOnce();
     expect(existsSync(homeOf(client))).toBe(false);
+  });
+
+  it("force-stops a runtime that has not stopped gracefully in time", async () => {
+    sdk.script.stop = () => new Promise<Error[]>(() => {});
+    const { gateway, client } = await connectedGateway();
+    vi.useFakeTimers();
+    const closing = gateway.close();
+    await vi.advanceTimersByTimeAsync(GRACEFUL_STOP_TIMEOUT_MS - 1);
+    expect(client.forceStop).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    await closing;
+    expect(client.forceStop).toHaveBeenCalledOnce();
+    expect(existsSync(homeOf(client))).toBe(false);
+  });
+
+  it("leaves no timer behind after a prompt graceful stop", async () => {
+    const { gateway } = await connectedGateway();
+    vi.useFakeTimers();
+    await gateway.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
