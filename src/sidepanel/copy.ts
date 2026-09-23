@@ -76,6 +76,7 @@ export const SEND_ERROR_TEXT: Record<ErrorCode<"send">, string> = {
   not_authorized: "This account is not allowed to use that model.",
   quota_exceeded: "The Copilot allowance for this model is used up.",
   rate_limited: "GitHub is rate-limiting requests. Wait before trying again.",
+  context_limit: "The conversation is too long for this model's context window. Disconnect to start a new conversation.",
   send_failed: "The request failed before the response finished.",
   output_limit: `The response passed ${OUTPUT_LIMIT} characters, so the companion stopped it. Output is incomplete.`,
   timeout: `The response did not finish within ${OPERATION_TIMEOUT_SECONDS} seconds, so the companion stopped it. Output may be incomplete.`,

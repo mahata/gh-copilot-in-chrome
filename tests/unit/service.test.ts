@@ -46,6 +46,7 @@ function createFakeGateway() {
       turns.push(turn);
       return { outcome: turn.outcome.promise, abort: turn.abort };
     }),
+    startNewConversation: vi.fn(),
     close: vi.fn(async () => {}),
   } satisfies CopilotGateway;
   return { gateway, connection, turns };
@@ -459,6 +460,17 @@ describe("send", () => {
     itemAt(gateway.turns, 0).outcome.reject(new GatewayFailure("models_unavailable"));
     await settle();
     expect(emitted).toEqual([{ type: "error", stage: "send", code: "send_failed" }]);
+  });
+
+  it("reports a conversation that outgrew the model's context window and stays connected", async () => {
+    const { service, gateway, emitted } = await startConnected();
+    service.handle({ type: "send", model: "gpt-5-mini" });
+    itemAt(gateway.turns, 0).outcome.reject(new GatewayFailure("context_limit"));
+    await settle();
+    service.handle({ type: "send", model: "gpt-5-mini" });
+
+    expect(emitted).toEqual([{ type: "error", stage: "send", code: "context_limit" }]);
+    expect(gateway.turns).toHaveLength(2);
   });
 
   it("reports a turn that cannot start and stays connected", async () => {

@@ -11,6 +11,7 @@ export type Turn = { outcome: Promise<TurnOutcome>; abort: () => Promise<void> }
 export type CopilotGateway = {
   connect: (token: string) => Promise<ConnectedAccount>;
   startTurn: (request: TurnRequest) => Turn;
+  startNewConversation: () => void;
   close: () => Promise<void>;
 };
 
@@ -25,6 +26,7 @@ export const TURN_FAILURE_CODES = [
   "not_authorized",
   "quota_exceeded",
   "rate_limited",
+  "context_limit",
   "send_failed",
 ] as const satisfies readonly ErrorCode<"send">[];
 

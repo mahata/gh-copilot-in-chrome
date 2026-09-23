@@ -16,15 +16,51 @@ const TURN_FAILURE_BY_ERROR_TYPE = new Map<string, TurnFailureCode>([
   ["authorization", "not_authorized"],
   ["quota", "quota_exceeded"],
   ["rate_limit", "rate_limited"],
+  ["context_limit", "context_limit"],
 ]);
+
+type Conversation = { session: CopilotSession; model: string };
 
 export function createSdkGateway(): CopilotGateway {
   let closed = false;
   let client: CopilotClient | undefined;
   let privateHome: string | undefined;
+  let conversation: Conversation | undefined;
 
   function ensureOpen(failureCode: GatewayFailureCode) {
     if (closed) throw new GatewayFailure(failureCode);
+  }
+
+  async function conversationSessionFor(model: string) {
+    const activeClient = client;
+    const workingDirectory = privateHome;
+    if (!activeClient || !workingDirectory || closed) throw new GatewayFailure("send_failed");
+
+    const current = conversation;
+    if (current) {
+      if (current.model !== model) {
+        await attempt(() => current.session.setModel(model), "send_failed");
+        ensureOpen("send_failed");
+        current.model = model;
+      }
+      return current.session;
+    }
+
+    const session = await attempt(
+      () =>
+        activeClient.createSession({
+          model,
+          streaming: true,
+          availableTools: [],
+          onPermissionRequest: () => ({ kind: "reject" }),
+          infiniteSessions: { enabled: false },
+          workingDirectory,
+        }),
+      "send_failed",
+    );
+    ensureOpen("send_failed");
+    conversation = { session, model };
+    return session;
   }
 
   return {
@@ -63,28 +99,9 @@ export function createSdkGateway(): CopilotGateway {
       let abortRequested = false;
 
       const outcome = (async (): Promise<TurnOutcome> => {
-        const activeClient = client;
-        const workingDirectory = privateHome;
-        if (!activeClient || !workingDirectory || closed) throw new GatewayFailure("send_failed");
-        const turnSession = await attempt(
-          () =>
-            activeClient.createSession({
-              model,
-              streaming: true,
-              availableTools: [],
-              onPermissionRequest: () => ({ kind: "reject" }),
-              infiniteSessions: { enabled: false },
-              workingDirectory,
-            }),
-          "send_failed",
-        );
-        session = turnSession;
-        try {
-          if (abortRequested) return "stopped";
-          return await runTurn(turnSession, prompt, onEvent);
-        } finally {
-          await turnSession.disconnect().catch(() => undefined);
-        }
+        session = await conversationSessionFor(model);
+        if (abortRequested) return "stopped";
+        return runTurn(session, prompt, onEvent);
       })();
 
       return {
@@ -96,12 +113,19 @@ export function createSdkGateway(): CopilotGateway {
       };
     },
 
+    startNewConversation() {
+      const previous = conversation;
+      conversation = undefined;
+      void previous?.session.disconnect().catch(() => undefined);
+    },
+
     async close() {
       closed = true;
       const closingClient = client;
       const closingHome = privateHome;
       client = undefined;
       privateHome = undefined;
+      conversation = undefined;
       if (closingClient) await stopClient(closingClient);
       if (closingHome) await removeDirectory(closingHome);
     },

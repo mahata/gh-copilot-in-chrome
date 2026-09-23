@@ -27,6 +27,7 @@ export const ERROR_CODES_BY_STAGE = {
     "not_authorized",
     "quota_exceeded",
     "rate_limited",
+    "context_limit",
     "send_failed",
     "output_limit",
     "timeout",

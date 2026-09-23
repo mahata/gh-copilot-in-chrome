@@ -70,6 +70,8 @@ function createFakeGateway(): CopilotGateway {
       };
     },
 
+    startNewConversation() {},
+
     async close() {},
   };
 }

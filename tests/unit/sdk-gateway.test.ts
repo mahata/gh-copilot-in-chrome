@@ -2,7 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayFailure } from "../../src/companion/gateway.ts";
-import type { TurnEvent } from "../../src/companion/gateway.ts";
+import type { CopilotGateway, Turn, TurnEvent } from "../../src/companion/gateway.ts";
 import { createSdkGateway, GRACEFUL_STOP_TIMEOUT_MS } from "../../src/companion/sdk-gateway.ts";
 import { MAX_MODELS } from "../../src/protocol/messages.ts";
 
@@ -20,11 +20,18 @@ const sdk = vi.hoisted(() => {
     readonly config: Record<string, unknown>;
     readonly handlers = new Set<(event: SdkEvent) => void>();
     readonly send = vi.fn(async (_options: { prompt: string }) => "message-1");
+    readonly setModel = vi.fn(async (_model: string) => {});
     readonly abort = vi.fn(async () => {});
-    readonly disconnect = vi.fn(async () => {});
+    readonly disconnectRequests = vi.fn();
+    disconnectOutcome: () => Promise<void> = async () => {};
 
     constructor(config: Record<string, unknown>) {
       this.config = config;
+    }
+
+    disconnect() {
+      this.disconnectRequests();
+      return this.disconnectOutcome();
     }
 
     on(handler: (event: SdkEvent) => void) {
@@ -64,7 +71,7 @@ const sdk = vi.hoisted(() => {
     forStdio: (options: Record<string, unknown>) => ({ kind: "stdio", ...options }),
   };
 
-  return { script, FakeCopilotClient, RuntimeConnection };
+  return { script, FakeCopilotClient, FakeSession, RuntimeConnection };
 });
 
 vi.mock("@github/copilot-sdk", () => ({
@@ -73,6 +80,9 @@ vi.mock("@github/copilot-sdk", () => ({
 }));
 
 const token = `github_pat_${"Q".repeat(82)}`;
+const idle = { type: "session.idle", data: {} };
+
+type FakeSession = InstanceType<typeof sdk.FakeSession>;
 
 function onlyClient() {
   expect(sdk.FakeCopilotClient.instances).toHaveLength(1);
@@ -101,6 +111,23 @@ async function startedTurn() {
   const [session] = client.sessions;
   if (!session) throw new Error("expected a session");
   return { gateway, client, session, turn, events };
+}
+
+async function answeredFirstTurn() {
+  const started = await startedTurn();
+  started.session.emit(idle);
+  await expect(started.turn.outcome).resolves.toBe("complete");
+  return started;
+}
+
+function sendPrompt(gateway: CopilotGateway, prompt: string, model = "gpt-5-mini") {
+  return gateway.startTurn({ model, prompt, onEvent: () => {} });
+}
+
+async function answer(session: FakeSession | undefined, turn: Turn, prompt: string) {
+  await vi.waitFor(() => expect(session?.send).toHaveBeenLastCalledWith({ prompt }));
+  session?.emit(idle);
+  await expect(turn.outcome).resolves.toBe("complete");
 }
 
 beforeEach(() => {
@@ -233,7 +260,7 @@ describe("startTurn", () => {
     await gateway.close();
   });
 
-  it("forwards root-agent deltas and usage, then completes on idle and disconnects", async () => {
+  it("forwards root-agent deltas and usage, then completes on idle and keeps the session open", async () => {
     const { gateway, session, turn, events } = await startedTurn();
     session.emit({ type: "assistant.message_delta", data: { deltaContent: "Connection ", messageId: "m1" } });
     session.emit({ type: "assistant.message_delta", agentId: "sub-agent", data: { deltaContent: "noise", messageId: "m2" } });
@@ -241,7 +268,7 @@ describe("startTurn", () => {
     session.emit({ type: "assistant.usage", data: { model: "gpt-5-mini", cost: 0, inputTokens: 12 } });
     session.emit({ type: "assistant.usage", data: { model: "gpt-5-mini", cost: Number.NaN } });
     session.emit({ type: "assistant.usage", agentId: "sub-agent", data: { model: "other", cost: 1 } });
-    session.emit({ type: "session.idle", data: {} });
+    session.emit(idle);
 
     await expect(turn.outcome).resolves.toBe("complete");
     expect(events).toEqual([
@@ -250,7 +277,7 @@ describe("startTurn", () => {
       { type: "usage", model: "gpt-5-mini", cost: 0 },
       { type: "usage", model: "gpt-5-mini" },
     ]);
-    expect(session.disconnect).toHaveBeenCalledOnce();
+    expect(session.disconnectRequests).not.toHaveBeenCalled();
     await gateway.close();
   });
 
@@ -267,25 +294,30 @@ describe("startTurn", () => {
     ["authorization", "not_authorized"],
     ["quota", "quota_exceeded"],
     ["rate_limit", "rate_limited"],
-    ["context_limit", "send_failed"],
+    ["context_limit", "context_limit"],
     ["query", "send_failed"],
   ])("maps a %s session error to %s without its server text", async (errorType, code) => {
     const { gateway, session, turn } = await startedTurn();
     session.emit({ type: "session.error", data: { errorType, message: `401 Unauthorized: ${token}`, statusCode: 401 } });
-    session.emit({ type: "session.idle", data: {} });
+    session.emit(idle);
 
     const failure = await turn.outcome.catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(GatewayFailure);
     expect(failure).toMatchObject({ code, message: code });
-    expect(session.disconnect).toHaveBeenCalledOnce();
+    expect(session.disconnectRequests).not.toHaveBeenCalled();
     await gateway.close();
   });
 
-  it("reports a send that the runtime rejects", async () => {
+  it("reports a session that cannot be created, then creates one on the next turn", async () => {
     const { gateway, client } = await connectedGateway();
     client.createSession.mockImplementationOnce(async () => Promise.reject(new Error(`SDK session authentication failed: ${token}`)));
-    const turn = gateway.startTurn({ model: "gpt-5-mini", prompt: "Say hi", onEvent: () => {} });
-    await expect(turn.outcome).rejects.toMatchObject({ code: "send_failed", message: "send_failed" });
+    const failedTurn = sendPrompt(gateway, "Say hi");
+    await expect(failedTurn.outcome).rejects.toMatchObject({ code: "send_failed", message: "send_failed" });
+
+    const nextTurn = sendPrompt(gateway, "Say hi");
+    await vi.waitFor(() => expect(client.sessions).toHaveLength(1));
+    await answer(client.sessions[0], nextTurn, "Say hi");
+    expect(client.createSession).toHaveBeenCalledTimes(2);
     await gateway.close();
   });
 
@@ -298,21 +330,122 @@ describe("startTurn", () => {
     await gateway.close();
   });
 
-  it("stops before sending when aborted while the session is being created", async () => {
+  it("stops before sending when aborted while the session is being created, and keeps the session", async () => {
     const { gateway, client } = await connectedGateway();
-    const turn = gateway.startTurn({ model: "gpt-5-mini", prompt: "Say hi", onEvent: () => {} });
+    const turn = sendPrompt(gateway, "Say hi");
     await turn.abort();
     await expect(turn.outcome).resolves.toBe("stopped");
     const [session] = client.sessions;
     expect(session?.send).not.toHaveBeenCalled();
-    expect(session?.disconnect).toHaveBeenCalledOnce();
+
+    const nextTurn = sendPrompt(gateway, "Try again");
+    await answer(session, nextTurn, "Try again");
+    expect(client.createSession).toHaveBeenCalledOnce();
     await gateway.close();
+  });
+
+  it("does not send when the gateway closes while the session is being created", async () => {
+    const { gateway, client } = await connectedGateway();
+    let releaseSession = () => {};
+    client.createSession.mockImplementationOnce(async (config: Record<string, unknown>) => {
+      await new Promise<void>((resolve) => (releaseSession = resolve));
+      const session = new sdk.FakeSession(config);
+      client.sessions.push(session);
+      return session;
+    });
+    const turn = sendPrompt(gateway, "Say hi");
+    await vi.waitFor(() => expect(client.createSession).toHaveBeenCalled());
+    await gateway.close();
+    releaseSession();
+
+    await expect(turn.outcome).rejects.toMatchObject({ code: "send_failed" });
+    expect(client.sessions[0]?.send).not.toHaveBeenCalled();
   });
 
   it("refuses to start a turn before connecting", async () => {
     const gateway = createSdkGateway();
     const turn = gateway.startTurn({ model: "gpt-5-mini", prompt: "Say hi", onEvent: () => {} });
     await expect(turn.outcome).rejects.toMatchObject({ code: "send_failed" });
+  });
+
+  it("refuses to continue the conversation after closing", async () => {
+    const { gateway, session } = await answeredFirstTurn();
+    await gateway.close();
+    await expect(sendPrompt(gateway, "Still there?").outcome).rejects.toMatchObject({ code: "send_failed" });
+    expect(session.send).toHaveBeenCalledOnce();
+  });
+});
+
+describe("conversation", () => {
+  it("sends every prompt of the conversation to one session", async () => {
+    const { gateway, client, session } = await answeredFirstTurn();
+    const secondTurn = sendPrompt(gateway, "And again");
+    await answer(session, secondTurn, "And again");
+
+    expect(client.createSession).toHaveBeenCalledOnce();
+    expect(session.send.mock.calls).toEqual([[{ prompt: "Say hi" }], [{ prompt: "And again" }]]);
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(session.disconnectRequests).not.toHaveBeenCalled();
+    await gateway.close();
+  });
+
+  it("switches the session's model before sending the next prompt, and only when the model changes", async () => {
+    const { gateway, client, session } = await answeredFirstTurn();
+    let finishSwitch = () => {};
+    session.setModel.mockImplementationOnce(() => new Promise<void>((resolve) => (finishSwitch = resolve)));
+    const switchedTurn = sendPrompt(gateway, "Now you", "claude-sonnet-4.5");
+    await vi.waitFor(() => expect(session.setModel).toHaveBeenCalledWith("claude-sonnet-4.5"));
+    expect(session.send).toHaveBeenCalledOnce();
+
+    finishSwitch();
+    await answer(session, switchedTurn, "Now you");
+    const sameModelTurn = sendPrompt(gateway, "And again", "claude-sonnet-4.5");
+    await answer(session, sameModelTurn, "And again");
+
+    expect(session.setModel).toHaveBeenCalledOnce();
+    expect(client.createSession).toHaveBeenCalledOnce();
+    await gateway.close();
+  });
+
+  it("fails a turn without sending when the model cannot be switched, then retries the switch", async () => {
+    const { gateway, session } = await answeredFirstTurn();
+    session.setModel.mockImplementationOnce(async () => Promise.reject(new Error(`model switch failed: ${token}`)));
+    const failedTurn = sendPrompt(gateway, "Now you", "claude-sonnet-4.5");
+    await expect(failedTurn.outcome).rejects.toMatchObject({ code: "send_failed", message: "send_failed" });
+    expect(session.send).toHaveBeenCalledOnce();
+
+    const retriedTurn = sendPrompt(gateway, "Now you", "claude-sonnet-4.5");
+    await answer(session, retriedTurn, "Now you");
+    expect(session.setModel).toHaveBeenCalledTimes(2);
+    await gateway.close();
+  });
+
+  it.each([
+    ["never finishes", () => new Promise<void>(() => {})],
+    ["fails", async () => Promise.reject(new Error("connection lost"))],
+  ])("starts a new conversation in a fresh session even when disconnecting the old one %s", async (_description, disconnect) => {
+    const { gateway, client, session } = await answeredFirstTurn();
+    session.disconnectOutcome = disconnect;
+
+    gateway.startNewConversation();
+    expect(session.disconnectRequests).toHaveBeenCalledOnce();
+    const freshTurn = sendPrompt(gateway, "Fresh start");
+    await vi.waitFor(() => expect(client.sessions).toHaveLength(2));
+    await answer(client.sessions[1], freshTurn, "Fresh start");
+
+    expect(session.send).toHaveBeenCalledOnce();
+    await gateway.close();
+  });
+
+  it("starts a new conversation before any turn without creating a session", async () => {
+    const { gateway, client } = await connectedGateway();
+    gateway.startNewConversation();
+    expect(client.createSession).not.toHaveBeenCalled();
+
+    const turn = sendPrompt(gateway, "Say hi");
+    await vi.waitFor(() => expect(client.sessions).toHaveLength(1));
+    await answer(client.sessions[0], turn, "Say hi");
+    await gateway.close();
   });
 });
 
@@ -322,6 +455,14 @@ describe("close", () => {
     await gateway.close();
     expect(client.stop).toHaveBeenCalledOnce();
     expect(client.forceStop).not.toHaveBeenCalled();
+    expect(existsSync(homeOf(client))).toBe(false);
+  });
+
+  it("leaves closing the conversation's session to the runtime stop", async () => {
+    const { gateway, client, session } = await answeredFirstTurn();
+    session.disconnectOutcome = () => new Promise<void>(() => {});
+    await gateway.close();
+    expect(client.stop).toHaveBeenCalledOnce();
     expect(existsSync(homeOf(client))).toBe(false);
   });
 

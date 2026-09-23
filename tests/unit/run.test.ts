@@ -40,6 +40,7 @@ function fakeGateway(overrides: Partial<CopilotGateway> = {}) {
         }),
       };
     }),
+    startNewConversation: vi.fn(),
     close: vi.fn(async () => {}),
     ...overrides,
   };

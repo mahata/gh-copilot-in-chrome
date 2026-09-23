@@ -51,6 +51,11 @@ describe("side panel copy", () => {
     expect(SEND_ERROR_TEXT.timeout).toContain("60 seconds");
   });
 
+  it("tells the user how to start over when the conversation outgrows the model's context window", () => {
+    expect(SEND_ERROR_TEXT.context_limit).toContain("context window");
+    expect(SEND_ERROR_TEXT.context_limit).toContain("Disconnect");
+  });
+
   it("tells the user how to install a missing companion", () => {
     expect(BRIDGE_FAILURE_TEXT.companion_not_installed).toContain("npm run companion:install");
   });

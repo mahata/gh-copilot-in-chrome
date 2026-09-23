@@ -89,6 +89,7 @@ describe("companion to panel messages", () => {
     { type: "error", stage: "credential", code: "save_failed" },
     { type: "error", stage: "credential", code: "forget_failed" },
     { type: "error", stage: "send", code: "output_limit" },
+    { type: "error", stage: "send", code: "context_limit" },
     { type: "error", stage: "protocol", code: "frame_too_large" },
   ])("accepts %j", (message) => {
     expect(parseCompanionMessage(message)).toEqual(message);
