@@ -174,7 +174,8 @@ The companion:
     different default keychain or search list does not change where it saves, reads or
     deletes the PAT.
   - It saves the PAT only when **Remember** is checked and GitHub has accepted it,
-    replacing any earlier one.
+    replacing any earlier one. Choosing **Forget saved PAT** before GitHub accepts it
+    cancels that save, so the last choice wins.
   - At startup it checks only whether the item exists. It reads the PAT only to connect
     with it, and uses it only if it is still a well-formed fine-grained PAT.
   - It deletes the item on **Forget saved PAT** and on `npm run companion:uninstall`.

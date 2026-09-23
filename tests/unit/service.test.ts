@@ -350,6 +350,24 @@ describe("saved PAT", () => {
     expect(connected.emitted).toEqual([{ type: "credential", saved: false }]);
   });
 
+  it("does not save a remembered PAT that was forgotten while it was connecting", async () => {
+    const store = createFakeStore(savedToken);
+    const { service, gateways, emitted } = startService({ store });
+    service.handle({ type: "connect", token, remember: true });
+    service.handle({ type: "forget" });
+    await settle();
+    itemAt(gateways, 0).connection.resolve(account);
+    await settle();
+
+    expect(store.forgetToken).toHaveBeenCalledOnce();
+    expect(store.saveToken).not.toHaveBeenCalled();
+    await expect(store.hasSavedToken()).resolves.toBe(false);
+    expect(emitted).toEqual([
+      { type: "credential", saved: false },
+      { type: "connected", login: "octocat", models: account.models },
+    ]);
+  });
+
   it("reports a PAT that could not be forgotten", async () => {
     const store = createFakeStore(savedToken);
     store.forgetToken.mockRejectedValueOnce(new Error("security exited with 51"));

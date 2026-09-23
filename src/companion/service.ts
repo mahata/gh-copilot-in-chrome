@@ -13,7 +13,7 @@ type CompanionServiceOptions = {
   onRuntimeStuck: () => void;
 };
 
-type Connecting = { phase: "connecting"; gateway: CopilotGateway };
+type Connecting = { phase: "connecting"; gateway: CopilotGateway; saveTokenOnSuccess: boolean };
 type Connected = { phase: "connected"; gateway: CopilotGateway; modelIds: ReadonlySet<string> };
 type Sending = {
   phase: "sending";
@@ -44,24 +44,24 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
   }
 
   function connect(token: string, remember: boolean) {
-    const connecting = startConnecting();
-    if (connecting) connectGateway(connecting, token, remember);
+    const connecting = startConnecting({ saveTokenOnSuccess: remember });
+    if (connecting) connectGateway(connecting, token);
   }
 
   function connectWithSavedToken() {
-    const connecting = startConnecting();
+    const connecting = startConnecting({ saveTokenOnSuccess: false });
     if (!connecting) return;
     queueCredentialTask(() => store.loadToken()).then(
       (savedToken) => {
         if (state !== connecting) return;
         if (savedToken === undefined) failConnect(connecting, "no_saved_token");
-        else connectGateway(connecting, savedToken, false);
+        else connectGateway(connecting, savedToken);
       },
       () => failConnect(connecting, "keychain_read_failed"),
     );
   }
 
-  function startConnecting() {
+  function startConnecting({ saveTokenOnSuccess }: { saveTokenOnSuccess: boolean }) {
     if (state.phase === "connecting" || state.phase === "closing") {
       emit(connectError("busy"));
       return undefined;
@@ -78,13 +78,13 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
       emit(connectError("sdk_start_failed"));
       return undefined;
     }
-    const connecting: Connecting = { phase: "connecting", gateway };
+    const connecting: Connecting = { phase: "connecting", gateway, saveTokenOnSuccess };
     state = connecting;
     startDeadline(CONNECT_TIMEOUT_MS, () => failConnect(connecting, "timeout"));
     return connecting;
   }
 
-  function connectGateway(connecting: Connecting, token: string, remember: boolean) {
+  function connectGateway(connecting: Connecting, token: string) {
     const { gateway } = connecting;
     gateway.connect(token).then(
       ({ login, models }) => {
@@ -92,7 +92,7 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
         clearDeadline();
         state = { phase: "connected", gateway, modelIds: new Set(models.map((model) => model.id)) };
         emit(login === undefined ? { type: "connected", models } : { type: "connected", login, models });
-        if (remember) saveToken(token);
+        if (connecting.saveTokenOnSuccess) saveToken(token);
       },
       (error: unknown) => failConnect(connecting, connectFailureCode(error)),
     );
@@ -106,6 +106,7 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
   }
 
   function forgetToken() {
+    if (state.phase === "connecting") state.saveTokenOnSuccess = false;
     queueCredentialTask(() => store.forgetToken()).then(
       () => emitUnlessClosed({ type: "credential", saved: false }),
       () => emitUnlessClosed(credentialError("forget_failed")),
