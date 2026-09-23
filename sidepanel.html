@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Copilot Connection Experiment</title>
+    <title>Copilot in Chrome (unofficial)</title>
     <script type="module" src="/src/sidepanel/index.ts"></script>
   </head>
   <body>
     <main>
       <header>
-        <h1>Connection experiment</h1>
-        <p>Can Chrome reach GitHub Copilot through the official SDK?</p>
+        <h1>Copilot in Chrome (unofficial)</h1>
+        <p>Chat with GitHub Copilot from Chrome through the official SDK.</p>
         <p class="disclosure">This private, unofficial prototype has no network access of its own.
           It talks only to a companion on this Mac, which runs the official GitHub Copilot SDK.
           Page capture is outside its scope.</p>
@@ -27,51 +27,62 @@
         <p>Use a fresh, expiring fine-grained PAT with your personal account as resource owner and
           <strong>Copilot Requests</strong> permission only.</p>
         <p id="credential-note">The panel hands the token to the local companion and clears this field.
-          The companion keeps it in memory until you clear or close this panel.
+          The companion keeps it in memory until you disconnect or close this panel.
+          With Remember checked, it also saves the token in your macOS login keychain once GitHub accepts it.
           Never paste it into chat or an issue.</p>
+        <p>Connecting starts the Copilot SDK on this Mac, which checks the PAT with GitHub and lists your
+          models. No prompt is sent.</p>
+        <div id="saved-token" class="saved-token" hidden>
+          <p>A PAT is saved in your macOS login keychain. While it is saved, the panel connects with it
+            each time it opens.</p>
+          <div class="actions">
+            <button id="connect-saved" type="button" disabled>Connect with saved PAT</button>
+            <button id="forget" class="secondary" type="button">Forget saved PAT</button>
+          </div>
+        </div>
         <form id="auth-form">
           <label for="pat">Fine-grained PAT</label>
           <input id="pat" type="password" autocomplete="off" spellcheck="false"
             autocapitalize="off" maxlength="511" aria-describedby="credential-note" disabled>
-          <label class="consent">
-            <input id="auth-consent" type="checkbox" disabled>
-            <span>I authorize the local companion to start the Copilot SDK with this PAT, which checks it
-              with GitHub and lists models. No prompt is sent.</span>
+          <label class="checkbox">
+            <input id="remember" type="checkbox" checked disabled>
+            <span>Remember this PAT in my macOS login keychain</span>
           </label>
-          <button id="connect" type="submit" disabled>Connect (live)</button>
+          <div class="actions">
+            <button id="connect" type="submit" disabled>Connect</button>
+            <button id="disconnect" class="secondary" type="button" hidden>Disconnect</button>
+          </div>
         </form>
       </section>
 
-      <section aria-labelledby="inference-heading">
-        <h2 id="inference-heading">Try one response</h2>
-        <p>Only models the SDK reports as enabled for your account are offered.
-          The session has no tools, so it cannot read files or run commands.</p>
-        <label for="model">Model</label>
-        <select id="model" disabled></select>
-        <p class="prompt-label">The fixed test prompt (the SDK adds its own system instructions):</p>
-        <pre id="prompt"></pre>
-        <label class="consent">
-          <input id="inference-consent" type="checkbox" disabled>
-          <span>I approve one live request using my Copilot allowance.
-            Stopping may not prevent server-side work or charges.</span>
-        </label>
-        <button id="send" type="button" disabled>Send test prompt (live)</button>
-      </section>
-
-      <section aria-labelledby="result-heading">
+      <section aria-labelledby="chat-heading">
         <div class="section-heading">
-          <h2 id="result-heading">Response</h2>
-          <button id="stop" class="secondary" type="button" disabled>Stop</button>
+          <h2 id="chat-heading">Chat</h2>
+          <button id="new-chat" class="secondary" type="button" disabled>New chat</button>
         </div>
-        <pre id="output" aria-label="Response output" tabindex="0"></pre>
-        <p id="usage" hidden></p>
-        <button id="clear" class="secondary" type="button">Clear credentials and output</button>
+        <p>Every prompt you send is a live request that uses your Copilot allowance at the chosen model's
+          billing multiplier. Stopping may not prevent server-side work or charges.</p>
+        <p>Only models the SDK reports as enabled for your account are offered. The session has no tools,
+          so it cannot read files or run commands, and replies appear as plain text.</p>
+        <div id="transcript" class="transcript" role="log" aria-label="Conversation" tabindex="0"></div>
+        <form id="prompt-form">
+          <label for="model">Model</label>
+          <select id="model" disabled></select>
+          <label for="prompt">Prompt</label>
+          <textarea id="prompt" rows="4" aria-describedby="prompt-hint prompt-limit" disabled></textarea>
+          <p id="prompt-hint" class="hint">⌘ Enter or Ctrl Enter sends. Enter starts a new line.</p>
+          <p id="prompt-limit" class="prompt-limit" hidden></p>
+          <div class="actions">
+            <button id="send" type="submit" disabled>Send</button>
+            <button id="stop" class="secondary" type="button" disabled>Stop</button>
+          </div>
+        </form>
       </section>
       <footer>
         <p>GitHub processes live requests under its account policies and data-handling terms.
-          Clearing here does not delete data already sent to GitHub.</p>
-        <p>This project is not affiliated with GitHub. The panel stores nothing, sends no analytics,
-          and never retries a request on its own.</p>
+          Disconnecting or forgetting the saved PAT does not delete data already sent to GitHub.</p>
+        <p>This project is not affiliated with GitHub. The extension stores nothing in Chrome, sends no
+          analytics, and never retries a failed request on its own.</p>
       </footer>
     </main>
   </body>

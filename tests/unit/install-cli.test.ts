@@ -31,16 +31,18 @@ describe("companion installer command", { timeout: 15_000 }, () => {
     const { launcherPath, hostManifestPath } = companionInstallPaths(home);
     expect(readFileSync(launcherPath, "utf8")).toContain(`'${process.execPath}' '${companionEntryPath}'`);
 
-    const companion = spawn(launcherPath, [EXTENSION_ORIGIN], { stdio: ["pipe", "pipe", "inherit"] });
+    const companion = spawn(launcherPath, [EXTENSION_ORIGIN], { stdio: ["pipe", "pipe", "inherit"], env: { ...process.env, HOME: home } });
     const frames: unknown[] = [];
     const decoder = createFrameDecoder((frame) => frames.push(frame));
     companion.stdout.on("data", (chunk: Buffer) => decoder.push(chunk));
     const exitCode = new Promise<number | null>((resolve) => companion.on("exit", (code) => resolve(code)));
-    await vi.waitFor(() => expect(frames).toEqual([expect.objectContaining({ type: "hello", protocolVersion: 1 })]), { timeout: 10_000 });
+    await vi.waitFor(() => expect(frames).toEqual([expect.objectContaining({ type: "hello", protocolVersion: 2, savedToken: false })]), { timeout: 10_000 });
     companion.stdin.end();
     await expect(exitCode).resolves.toBe(0);
 
-    expect(runInstallCli(["--uninstall"]).status).toBe(0);
+    const uninstalled = runInstallCli(["--uninstall"]);
+    expect(uninstalled.status).toBe(0);
+    expect(uninstalled.stdout).toContain("No saved PAT was found in your macOS login keychain.");
     expect(existsSync(launcherPath)).toBe(false);
     expect(existsSync(hostManifestPath)).toBe(false);
   });

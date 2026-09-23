@@ -1,15 +1,24 @@
-export const PROTOCOL_VERSION = 1;
-
-export const FIXED_TEST_PROMPT = "Reply with exactly: Connection confirmed.";
+export const PROTOCOL_VERSION = 2;
 
 export const MAX_TOKEN_LENGTH = 255;
 export const MAX_FIELD_LENGTH = 200;
 export const MAX_MODELS = 200;
+export const MAX_PROMPT_LENGTH = 32_768;
 export const MAX_OUTPUT_LENGTH = 65_536;
-export const OPERATION_TIMEOUT_MS = 60_000;
+export const CONNECT_TIMEOUT_MS = 60_000;
+export const TURN_TIMEOUT_MS = 300_000;
 
 export const ERROR_CODES_BY_STAGE = {
-  connect: ["busy", "already_connected", "sdk_start_failed", "auth_failed", "models_unavailable", "timeout"],
+  connect: [
+    "busy",
+    "already_connected",
+    "no_saved_token",
+    "keychain_read_failed",
+    "sdk_start_failed",
+    "auth_failed",
+    "models_unavailable",
+    "timeout",
+  ],
   send: [
     "busy",
     "not_connected",
@@ -18,10 +27,12 @@ export const ERROR_CODES_BY_STAGE = {
     "not_authorized",
     "quota_exceeded",
     "rate_limited",
+    "context_limit",
     "send_failed",
     "output_limit",
     "timeout",
   ],
+  credential: ["save_failed", "forget_failed"],
   protocol: ["invalid_message", "frame_too_large"],
 } as const;
 
@@ -32,7 +43,13 @@ export type ErrorStage = keyof ErrorCodesByStage;
 export type ErrorCode<Stage extends ErrorStage> = ErrorCodesByStage[Stage][number];
 export type TurnOutcome = (typeof TURN_OUTCOMES)[number];
 
-export type PanelMessage = { type: "connect"; token: string } | { type: "send"; model: string } | { type: "stop" };
+export type PanelMessage =
+  | { type: "connect"; token: string; remember: boolean }
+  | { type: "connect_saved" }
+  | { type: "send"; model: string; prompt: string }
+  | { type: "stop" }
+  | { type: "new_chat" }
+  | { type: "forget" };
 
 export type ModelSummary = { id: string; name: string; multiplier?: number };
 
@@ -41,8 +58,9 @@ export type CompanionErrorMessage = {
 }[ErrorStage];
 
 export type CompanionMessage =
-  | { type: "hello"; protocolVersion: number; sdkVersion: string }
+  | { type: "hello"; protocolVersion: number; sdkVersion: string; savedToken: boolean }
   | { type: "connected"; login?: string; models: ModelSummary[] }
+  | { type: "credential"; saved: boolean }
   | { type: "delta"; text: string }
   | { type: "usage"; model: string; cost?: number }
   | { type: "done"; outcome: TurnOutcome }
@@ -60,17 +78,26 @@ export function parsePanelMessage(value: unknown): PanelMessage | undefined {
   if (!isJsonObject(value)) return undefined;
   switch (value.type) {
     case "connect":
-      return hasExactlyKeys(value, ["type", "token"]) &&
+      return hasExactlyKeys(value, ["type", "token", "remember"]) &&
         typeof value.token === "string" &&
-        isFineGrainedPersonalAccessToken(value.token)
-        ? { type: "connect", token: value.token }
+        isFineGrainedPersonalAccessToken(value.token) &&
+        typeof value.remember === "boolean"
+        ? { type: "connect", token: value.token, remember: value.remember }
         : undefined;
+    case "connect_saved":
+      return hasExactlyKeys(value, ["type"]) ? { type: "connect_saved" } : undefined;
     case "send":
-      return hasExactlyKeys(value, ["type", "model"]) && isBoundedField(value.model)
-        ? { type: "send", model: value.model }
+      return hasExactlyKeys(value, ["type", "model", "prompt"]) &&
+        isBoundedField(value.model) &&
+        isBoundedText(value.prompt, MAX_PROMPT_LENGTH)
+        ? { type: "send", model: value.model, prompt: value.prompt }
         : undefined;
     case "stop":
       return hasExactlyKeys(value, ["type"]) ? { type: "stop" } : undefined;
+    case "new_chat":
+      return hasExactlyKeys(value, ["type"]) ? { type: "new_chat" } : undefined;
+    case "forget":
+      return hasExactlyKeys(value, ["type"]) ? { type: "forget" } : undefined;
     default:
       return undefined;
   }
@@ -80,13 +107,18 @@ export function parseCompanionMessage(value: unknown): CompanionMessage | undefi
   if (!isJsonObject(value)) return undefined;
   switch (value.type) {
     case "hello":
-      return hasExactlyKeys(value, ["type", "protocolVersion", "sdkVersion"]) &&
+      return hasExactlyKeys(value, ["type", "protocolVersion", "sdkVersion", "savedToken"]) &&
         isInteger(value.protocolVersion) &&
-        isBoundedField(value.sdkVersion)
-        ? { type: "hello", protocolVersion: value.protocolVersion, sdkVersion: value.sdkVersion }
+        isBoundedField(value.sdkVersion) &&
+        typeof value.savedToken === "boolean"
+        ? { type: "hello", protocolVersion: value.protocolVersion, sdkVersion: value.sdkVersion, savedToken: value.savedToken }
         : undefined;
     case "connected":
       return parseConnected(value);
+    case "credential":
+      return hasExactlyKeys(value, ["type", "saved"]) && typeof value.saved === "boolean"
+        ? { type: "credential", saved: value.saved }
+        : undefined;
     case "delta":
       return hasExactlyKeys(value, ["type", "text"]) && isBoundedText(value.text, MAX_OUTPUT_LENGTH)
         ? { type: "delta", text: value.text }
@@ -133,6 +165,7 @@ function parseError(value: JsonObject): CompanionErrorMessage | undefined {
   const { stage, code } = value;
   if (stage === "connect" && isOneOf(code, ERROR_CODES_BY_STAGE.connect)) return { type: "error", stage, code };
   if (stage === "send" && isOneOf(code, ERROR_CODES_BY_STAGE.send)) return { type: "error", stage, code };
+  if (stage === "credential" && isOneOf(code, ERROR_CODES_BY_STAGE.credential)) return { type: "error", stage, code };
   if (stage === "protocol" && isOneOf(code, ERROR_CODES_BY_STAGE.protocol)) return { type: "error", stage, code };
   return undefined;
 }

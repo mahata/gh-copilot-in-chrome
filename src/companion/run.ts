@@ -1,6 +1,7 @@
 import type { Readable, Writable } from "node:stream";
 import { createFrameDecoder, encodeFrame, FrameError } from "./framing.ts";
 import type { CopilotGateway } from "./gateway.ts";
+import type { CredentialStore } from "./keychain.ts";
 import { createCompanionService } from "./service.ts";
 import { EXTENSION_ORIGIN } from "../protocol/identity.ts";
 import { parsePanelMessage, PROTOCOL_VERSION } from "../protocol/messages.ts";
@@ -16,12 +17,13 @@ export type RunCompanionOptions = {
   stderr: Writable;
   args: readonly string[];
   createGateway: () => CopilotGateway;
+  store: CredentialStore;
   sdkVersion: string;
 };
 
 export type RunningCompanion = { done: Promise<number>; shutdown: () => Promise<number> };
 
-export function runCompanion({ stdin, stdout, stderr, args, createGateway, sdkVersion }: RunCompanionOptions): RunningCompanion {
+export function runCompanion({ stdin, stdout, stderr, args, createGateway, store, sdkVersion }: RunCompanionOptions): RunningCompanion {
   if (args[0] !== EXTENSION_ORIGIN) {
     stderr.write(REFUSAL_NOTICE);
     const refused = Promise.resolve(FAILED_EXIT);
@@ -36,7 +38,7 @@ export function runCompanion({ stdin, stdout, stderr, args, createGateway, sdkVe
     if (!exiting && stdout.writable) stdout.write(encodeFrame(message));
   }
 
-  const service = createCompanionService({ createGateway, emit, onRuntimeStuck: () => exit(FAILED_EXIT) });
+  const service = createCompanionService({ createGateway, store, emit, onRuntimeStuck: () => exit(FAILED_EXIT) });
   const decoder = createFrameDecoder((frame) => {
     if (exiting) return;
     const message = parsePanelMessage(frame);
@@ -66,11 +68,19 @@ export function runCompanion({ stdin, stdout, stderr, args, createGateway, sdkVe
     void service.shutdown().then(() => reportExit(exitCode));
   }
 
+  function greetThenListen(savedToken: boolean) {
+    if (exiting) return;
+    emit({ type: "hello", protocolVersion: PROTOCOL_VERSION, sdkVersion, savedToken });
+    stdin.on("end", () => exit(CLEAN_EXIT));
+    stdin.on("data", receiveChunk);
+  }
+
   stdout.on("error", () => exit(FAILED_EXIT));
   stdin.on("error", () => exit(FAILED_EXIT));
-  stdin.on("end", () => exit(CLEAN_EXIT));
-  stdin.on("data", receiveChunk);
-  emit({ type: "hello", protocolVersion: PROTOCOL_VERSION, sdkVersion });
+  void store
+    .hasSavedToken()
+    .catch(() => false)
+    .then(greetThenListen);
 
   return {
     done,

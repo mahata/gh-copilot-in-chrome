@@ -2,12 +2,14 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 import { companionInstallPaths, runInstaller } from "../../src/companion/install.ts";
 import { EXTENSION_ORIGIN, HOST_NAME } from "../../src/protocol/identity.ts";
 
 let home: string;
 let messages: { log: string[]; error: string[] };
+let forgetToken: Mock<() => Promise<boolean>>;
 
 const nodePath = "/opt/node 24/bin/node";
 const companionEntryPath = "/Users/octocat/Octo's checkout/src/companion/main.ts";
@@ -19,6 +21,7 @@ function install(overrides: Partial<Parameters<typeof runInstaller>[0]> = {}) {
     home,
     nodePath,
     companionEntryPath,
+    store: { forgetToken },
     output: { log: (line) => messages.log.push(line), error: (line) => messages.error.push(line) },
     ...overrides,
   });
@@ -31,6 +34,7 @@ function uninstall() {
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "installer-home-"));
   messages = { log: [], error: [] };
+  forgetToken = vi.fn(async () => false);
 });
 
 afterEach(() => {
@@ -72,6 +76,7 @@ describe("runInstaller", () => {
     expect(statSync(hostManifestPath).mode & 0o777).toBe(0o644);
     expect(messages.log.join("\n")).toContain(hostManifestPath);
     expect(messages.error).toEqual([]);
+    expect(forgetToken).not.toHaveBeenCalled();
   });
 
   it("builds a launcher that forwards Chrome's arguments through quoted paths", async () => {
@@ -119,6 +124,35 @@ describe("runInstaller", () => {
     expect(messages.error).toEqual([]);
   });
 
+  it("removes the saved PAT from the Keychain when uninstalling", async () => {
+    forgetToken.mockResolvedValue(true);
+    await install();
+
+    await expect(uninstall()).resolves.toBe(0);
+    expect(forgetToken).toHaveBeenCalledTimes(1);
+    expect(messages.log).toContain("Removed the saved PAT from your macOS login keychain.");
+    expect(messages.error).toEqual([]);
+  });
+
+  it("says so when the Keychain holds no saved PAT", async () => {
+    await expect(uninstall()).resolves.toBe(0);
+    expect(forgetToken).toHaveBeenCalledTimes(1);
+    expect(messages.log).toContain("No saved PAT was found in your macOS login keychain.");
+  });
+
+  it("still removes the companion but fails with Keychain Access steps when the saved PAT cannot be removed", async () => {
+    forgetToken.mockRejectedValue(new Error("security failed"));
+    await install();
+    const { launcherDirectory, hostManifestPath } = companionInstallPaths(home);
+
+    await expect(uninstall()).resolves.toBe(1);
+    expect(existsSync(launcherDirectory)).toBe(false);
+    expect(existsSync(hostManifestPath)).toBe(false);
+    expect(messages.error.join("\n")).toContain("Keychain Access");
+    expect(messages.error.join("\n")).toContain(HOST_NAME);
+    expect(messages.error.join("\n")).not.toContain("security failed");
+  });
+
   it.each([
     ["outside macOS", { platform: "linux" as const }, /macOS only/],
     ["with an unknown argument", { args: ["--force"] }, /Usage: npm run companion:install/],
@@ -126,5 +160,6 @@ describe("runInstaller", () => {
     await expect(install(overrides)).resolves.toBe(1);
     expect(messages.error.join("\n")).toMatch(message);
     expect(readdirSync(home)).toEqual([]);
+    expect(forgetToken).not.toHaveBeenCalled();
   });
 });

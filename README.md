@@ -1,13 +1,13 @@
 # gh-copilot-in-chrome
 
-A private experiment: a Chrome side panel that reaches GitHub Copilot through the
+A private experiment: a Chrome side panel for chatting with GitHub Copilot through the
 official [Copilot SDK](https://github.com/github/copilot-sdk), which runs in a small
 companion process on your Mac. This project is not affiliated with GitHub.
 
-**Current status:** the side panel, the companion and its macOS installer are built and
-tested against a scripted fake companion. Whether a real fine-grained PAT authenticates
-through the SDK, which models it lists and how usage is billed are all **unverified** until
-you run the [live check](#live-check).
+**Current status:** the chat panel, the companion, its macOS Keychain storage for your PAT
+and its installer are built and tested against a scripted fake companion. Whether a real
+fine-grained PAT authenticates through the SDK, which models it lists and how usage is
+billed are all **unverified** until you run the [live check](#live-check).
 
 ## Why a local companion
 
@@ -25,6 +25,7 @@ so the experiment now uses that route instead:
 ```mermaid
 flowchart LR
   Panel["Side panel<br/>(no network access)"] -- "Chrome native messaging<br/>(stdio, JSON)" --> Companion["Companion<br/>(Node.js on this Mac)"]
+  Companion -- "/usr/bin/security" --> Keychain["macOS login keychain<br/>(saved PAT, optional)"]
   Companion -- "Copilot SDK" --> Runtime["Bundled Copilot runtime"]
   Runtime -- HTTPS --> GitHub["GitHub Copilot"]
 ```
@@ -32,9 +33,12 @@ flowchart LR
 - The extension cannot reach the network. It has no host permissions, and its CSP sets
   `connect-src 'none'`. It can talk only to the companion.
 - Chrome starts the companion when the panel opens, so the panel can tell whether it is
-  installed. Nothing is sent to GitHub until you choose **Connect (live)**.
-- The companion lives only as long as the panel's connection. **Clear credentials and
-  output** or closing the panel ends it, along with its PAT and SDK session.
+  installed and whether a PAT is saved. With a saved PAT, the panel connects right away.
+  Otherwise nothing is sent to GitHub until you choose **Connect**.
+- The companion lives only as long as the panel's connection. **Disconnect** ends it, along
+  with its in-memory PAT and SDK session, and starts a fresh one that waits for you to
+  connect again. Closing the panel ends it too. A saved PAT stays in your login keychain
+  until you choose **Forget saved PAT** or uninstall the companion.
 
 ## Requirements
 
@@ -67,30 +71,60 @@ extension from the toolbar. The status line should read "Companion ready (Copilo
   registers the launcher with Chrome for this extension only.
 
 Run it again after moving this checkout or changing Node.js. To remove the companion, run
-`npm run companion:uninstall`, then remove the extension in `chrome://extensions`.
+`npm run companion:uninstall`, which also deletes any saved PAT from your login keychain,
+then remove the extension in `chrome://extensions`.
+
+## Use
+
+- **Connect:** paste a fine-grained PAT and choose **Connect**. With **Remember this PAT in
+  my macOS login keychain** checked, as it is by default, the companion saves the PAT once
+  GitHub accepts it, and the panel connects with it whenever it opens. After
+  **Disconnect**, **Connect with saved PAT** reconnects. **Forget saved PAT** deletes it.
+- **Chat:** choose a model, write a prompt of up to 32,768 characters, and choose **Send**
+  or press ⌘ Enter or Ctrl Enter. Enter starts a new line. The panel preselects the model
+  with the lowest billing multiplier, and each option shows the multiplier the SDK
+  reported.
+- **Replies:** they stream in as plain text, and the conversation follows them while you
+  are scrolled to its end. **Stop** ends a reply early and keeps what arrived. You can
+  draft the next prompt meanwhile.
+- **Conversations:** the conversation carries across prompts, including when you switch
+  models. **New chat** starts over, and Copilot no longer sees the earlier messages. If a
+  conversation outgrows the model's context window, a reply can fail with
+  `context_limit`. Start a new chat when that happens.
 
 ## Live check
 
-The live check is a separate step that you authorize yourself. Neither the test suite nor
-opening the panel runs it. Never put a credential in chat, issues, commits, screenshots,
-logs or CI.
+The live check is your first use with a real PAT, and you authorize it yourself. The test
+suite never runs it. Never put a credential in chat, issues, commits, screenshots, logs or
+CI.
 
 1. Create a fresh, expiring
    [fine-grained PAT](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/authenticate-copilot-cli)
    with your personal account as resource owner and only the **Copilot Requests** account
    permission.
-2. Paste it into **Fine-grained PAT**, check the authorization box, and choose **Connect
-   (live)**. The companion starts the SDK, which checks the PAT with GitHub and lists
-   models. No prompt is sent.
-3. Choose one of the models the SDK reports as enabled. Each option shows the billing
-   multiplier the SDK reported.
-4. Check the approval box and choose **Send test prompt (live)**. The prompt is fixed:
-   `Reply with exactly: Connection confirmed.` The SDK adds its own system instructions.
-   Each send needs a fresh approval, and nothing is retried automatically.
-5. Record the status line, any error code, the Chrome and SDK versions, the model ID and
-   the "SDK usage report" line. Check usage in your GitHub account separately. Do not record
-   tokens, raw server responses or headers.
-6. Choose **Clear credentials and output** or close the panel, then revoke the PAT.
+2. Paste it into **Fine-grained PAT**, leave **Remember** checked, and choose **Connect**.
+   The companion starts the SDK, which checks the PAT with GitHub and lists models. No
+   prompt is sent. Once GitHub accepts the PAT, the panel says it is saved in your macOS
+   login keychain.
+3. Check that the Keychain item exists. This command prints its attributes but not the PAT:
+
+   ```sh
+   security find-generic-password -s io.github.mahata.gh_copilot_in_chrome -a fine-grained-pat login.keychain
+   ```
+
+4. Send a short prompt, then a follow-up that depends on the reply. Switch models, send
+   another follow-up, and check that the conversation carries over. Every prompt is a live
+   request that uses your Copilot allowance, and nothing is retried automatically.
+5. Choose **New chat** and check that Copilot no longer sees the earlier messages. Then ask
+   for a long answer and choose **Stop** while it streams. The partial reply should stay,
+   marked "Stopped. Output may be incomplete."
+6. Close the panel and open it again. It should connect with the saved PAT on its own.
+7. Record the status lines, any error codes, the Chrome and SDK versions, the model IDs and
+   the "SDK usage report" lines. Check usage in your GitHub account separately. Do not
+   record tokens, raw server responses or headers.
+8. Choose **Forget saved PAT** and run the command from step 3 again. It should report that
+   the item could not be found. Then choose **Disconnect** or close the panel, and revoke
+   the PAT.
 
 If something fails:
 
@@ -102,6 +136,9 @@ If something fails:
 - **`sdk_start_failed`:** the SDK's platform runtime may be missing. It is an optional
   dependency (`@github/copilot-sdk-darwin-arm64` or `-darwin-x64`), so run `npm ci` without
   `--omit=optional`.
+- **`keychain_read_failed`, `save_failed` or `forget_failed`:** `/usr/bin/security` could
+  not read, save or delete the saved PAT. Pasting a PAT still connects. Record the result,
+  and delete any leftover item in Keychain Access.
 - **`companion_*` codes:** the panel names the fix. Most need `npm run companion:install`
   followed by **Check again**.
 
@@ -117,53 +154,85 @@ The extension:
 - Requests only `sidePanel` and `nativeMessaging`. It has no host permissions, no content
   scripts and no access to pages.
 - Sends the companion a PAT only if it starts with `github_pat_`, and clears the field on
-  submission. It stores nothing, so credentials, models and output live only in memory.
-- Renders responses as text, never as HTML. Errors show fixed text and a code, never the
-  server's text or the token.
+  submission. It stores nothing in Chrome, so models and the conversation live only in the
+  panel's memory.
+- Sends only the prompts you submit, exactly as typed, and refuses any over 32,768
+  characters. It attaches no page content, selection or files.
+- Renders prompts and responses as text, never as HTML. Errors show fixed text and a code,
+  never the server's text or the token.
 
 The companion:
 
 - Exits unless its first argument is this extension's origin, which Chrome passes when this
   extension starts it. Chrome's host manifest also allows only this extension ID.
-- Accepts three messages: connect with a PAT, send using a model from this connection's
-  list, and stop. It never accepts prompt text, because the fixed prompt lives in the
-  companion.
+- Accepts six messages: connect with a PAT, optionally remembering it; connect with the
+  saved PAT; send a prompt of at most 32,768 characters to a model from this connection's
+  list; stop; start a new chat; and forget the saved PAT.
+- Keeps a saved PAT as a generic password item in your login keychain, with service
+  `io.github.mahata.gh_copilot_in_chrome` and account `fine-grained-pat`:
+  - It names the login keychain (`login.keychain`) in every `security` command, so a
+    different default keychain or search list does not change where it saves, reads or
+    deletes the PAT.
+  - It saves the PAT only when **Remember** is checked and GitHub has accepted it,
+    replacing any earlier one. Choosing **Forget saved PAT** before GitHub accepts it
+    cancels that save, so the last choice wins.
+  - At startup it checks only whether the item exists. It reads the PAT only to connect
+    with it, and uses it only if it is still a well-formed fine-grained PAT.
+  - It deletes the item on **Forget saved PAT** and on `npm run companion:uninstall`.
+  - It runs `/usr/bin/security` with only `HOME` and a system `PATH`, and stops it after
+    10 seconds. The PAT goes in on standard input rather than as an argument, the tool's
+    error output is discarded, and the PAT is never logged.
 - Configures the SDK:
-  - `mode: "empty"` and `useLoggedInUser: false`, which turn off the keychain, a stored CLI
-    login and the SDK's other ambient features.
+  - `mode: "empty"` and `useLoggedInUser: false`, which stop the runtime from using stored
+    OAuth tokens or `gh` CLI authentication and turn off the SDK's other ambient features.
+    The runtime authenticates only with the PAT the companion passes as `gitHubToken`.
   - No tools (`availableTools: []`), and every permission request is rejected.
-  - A fresh session for each send, disconnected afterwards. Sub-agent events are ignored.
+  - One streaming session per conversation, kept across prompts and switched with
+    `setModel` when you change models. **New chat** disconnects it, and the next prompt
+    starts a fresh one. Infinite sessions are off, which turns off the SDK's background
+    compaction and session workspace, so an overlong conversation can fail with
+    `context_limit`. Sub-agent events are ignored.
 - Gives the runtime a new private temporary directory as its `HOME`, `TMPDIR`, Copilot home
   (`COPILOT_HOME`) and working directory, instead of your `~/.copilot` configuration. The
   rest of its environment is a system `PATH` and the variables the SDK adds, so tokens such
   as `GH_TOKEN` are not passed on. Neither are proxy and custom CA settings such as
   `HTTPS_PROXY` or `NODE_EXTRA_CA_CERTS`, so networks that require them will not work.
-- Enforces limits: 64 KiB per inbound message, 1 MiB per outbound message (Chrome's limit),
-  65,536 characters of output, 60 seconds per connect or send, and one operation at a time.
-  The output and time limits end a request with an explicit error and keep the partial
-  output.
+- Enforces limits: 256 KiB per inbound message, 1 MiB per outbound message (Chrome's
+  limit), 32,768 characters per prompt, 65,536 characters per reply, 60 seconds per
+  connect, 5 minutes per reply, and one connect or prompt at a time. The reply length and
+  time limits end a reply with an explicit error and keep what arrived.
 - Counts an operation as running until it has cleaned up, and reports its error only then.
-  A failed or timed-out connection waits for its runtime to stop. A request ended by a limit
-  waits for its SDK session to end. If that session has not ended 5 seconds after the abort,
-  the companion reports the limit, stops the runtime and exits, and the panel offers
-  **Check again**.
-- Handles **Stop** by aborting the SDK session and keeping the partial output, marked
-  incomplete. It may not prevent server-side work or charges.
+  A failed or timed-out connection waits for its runtime to stop. A reply ended by a limit
+  waits for its turn to end. If the turn has not ended 5 seconds after the abort, the
+  companion reports the limit, stops the runtime and exits, and the panel offers **Check
+  again**.
+- Handles **Stop** by aborting the current turn and keeping the partial output, marked
+  incomplete. It may not prevent server-side work or charges. Stop replaces the reply's
+  5-minute limit with 5 seconds: if the turn has not ended by then, the companion reports
+  it stopped, stops the runtime and exits, and the panel offers **Check again**.
 - Stops a runtime by asking it to shut down, killing it if it has not stopped within
   5 seconds, and then deleting its temporary directory. It does this after a failed
   connection and on exit.
 
 Accepted risks:
 
+- A saved PAT is encrypted at rest in your login keychain, never in Chrome's profile. But
+  macOS trusts the tool that created an item to read it without warning. The companion
+  saves the PAT with `/usr/bin/security`, so any process running as your macOS user can
+  read it by running that tool. Use an expiring PAT and forget it when you are done.
+- While a PAT is saved, the panel connects with it every time it opens, which sends it to
+  GitHub through the SDK.
 - While connected, the PAT sits in the companion's memory and in the runtime's
   `COPILOT_SDK_AUTH_TOKEN` environment variable. Other processes running as your macOS user
-  can read it there. Use a short-lived PAT and clear when you are done.
+  can read it there. Use a short-lived PAT and disconnect when you are done.
 - Because the manifest's public `key` fixes the ID, any unpacked extension with the same key
-  can talk to the companion. Loading one requires access to your Chrome profile.
-- If the companion is still running a few seconds after the panel disconnects, Chrome
-  force-quits it. Its temporary directory (`$TMPDIR/gh-copilot-in-chrome-*`) can then remain,
-  holding the runtime's session log with the prompt and response but not the token. Delete
-  leftovers by hand.
+  can talk to the companion, including connecting with the saved PAT and sending prompts.
+  The companion never sends the PAT back. Loading such an extension requires access to
+  your Chrome profile.
+- While the companion runs, the runtime's session log in its temporary directory holds your
+  prompts and replies, but not the token. If the companion is still running a few seconds
+  after the panel disconnects, Chrome force-quits it, and that directory
+  (`$TMPDIR/gh-copilot-in-chrome-*`) can then remain. Delete leftovers by hand.
 - The runtime keeps its default integration ID, `copilot-developer-cli`. The companion only
   names itself `gh-copilot-in-chrome` in the SDK's `clientInfo`, which labels the runtime's
   telemetry.
@@ -173,9 +242,10 @@ Accepted risks:
   SDK, review `src/companion/sdk-gateway.ts`, then run `npm run check` and the live check
   again.
 
-GitHub receives the PAT, the fixed prompt with the SDK's system instructions, the chosen
-model, and whatever request metadata and telemetry the official runtime sends. This project
-neither configures nor suppresses that telemetry. Clearing locally does not retract anything
+GitHub receives the PAT, your prompts and the conversation so far with the SDK's system
+instructions, the chosen model, and whatever request metadata and telemetry the official
+runtime sends. This project neither configures nor suppresses that telemetry.
+Disconnecting, starting a new chat or forgetting the saved PAT does not retract anything
 already sent.
 
 ## Development
@@ -192,14 +262,19 @@ browser tests. The browser tests:
 - Use the real installer to register a scripted fake companion in a throwaway Chromium
   profile.
 - Load the built extension and drive every panel state, including a missing companion,
-  rejected tokens, no models, streaming, Stop, failures, a crash, Clear, closing the panel,
-  permissions and layout.
-- Run the real protocol code in the fake companion, which never loads the SDK.
+  rejected tokens, no models, saving, reusing, replacing and forgetting a PAT, multi-turn
+  chat, model switches, New chat, keyboard shortcuts and input methods, the prompt length
+  limit, following a streaming reply, Stop, failures, a crash mid-reply, Disconnect,
+  closing the panel, permissions and layout.
+- Run the real protocol code in the fake companion, which never loads the SDK and keeps
+  its saved PAT in a temporary file instead of the Keychain.
 - Block and record every HTTP request the browser makes, and assert that the install,
-  connect-and-send and permission flows make none.
+  chat, saved-PAT and permission flows make none.
 
 No real PAT or Copilot allowance is used, so the tests do not establish live compatibility
-or billing.
+or billing. They never touch your login keychain either. Tests that run the real
+`/usr/bin/security`, directly or through the real companion or installer, give it a
+temporary `HOME`, where it finds no login keychain. The other tests use fakes.
 
 CI runs the same checks on Ubuntu for pull requests, pushes to `main`, and on demand from
 the Actions tab. There, Chromium also reads the profile's `NativeMessagingHosts` directory.
@@ -212,9 +287,9 @@ no secrets and has read-only repository access.
 
 The code is organized as:
 
-- `src/sidepanel/`: the panel UI and its native messaging bridge.
-- `src/companion/`: the companion's entry point, protocol state machine, SDK gateway, frame
-  codec and installer.
+- `src/sidepanel/`: the chat panel UI and its native messaging bridge.
+- `src/companion/`: the companion's entry point, protocol state machine, SDK gateway,
+  Keychain store, frame codec and installer.
 - `src/protocol/`: the messages and extension identity shared by both sides.
 
 ## Evidence
@@ -230,3 +305,7 @@ The code is organized as:
   `assistant.message_delta`, `session.idle` and the `assistant.usage` multiplier.
 - [Chrome native messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging)
   and [the manifest `key`](https://developer.chrome.com/docs/extensions/reference/manifest/key).
+- `man security`, under `add-generic-password`: `-U` replaces an existing item, and by
+  default the application that creates an item is trusted to read it without warning. The
+  add, find and delete commands also take a keychain argument, and the page's examples name
+  the login keychain `login.keychain`.

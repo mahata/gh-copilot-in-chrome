@@ -1,5 +1,6 @@
 import { chmod, mkdir, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { CredentialStore } from "./keychain.ts";
 import { EXTENSION_ORIGIN, HOST_NAME } from "../protocol/identity.ts";
 
 const SUPPORTED_PLATFORM = "darwin";
@@ -15,6 +16,7 @@ export type InstallerOptions = {
   home: string;
   nodePath: string;
   companionEntryPath: string;
+  store: Pick<CredentialStore, "forgetToken">;
   output: { log: (line: string) => void; error: (line: string) => void };
 };
 
@@ -30,7 +32,7 @@ export function companionInstallPaths(home: string) {
   };
 }
 
-export async function runInstaller({ args, platform, home, nodePath, companionEntryPath, output }: InstallerOptions) {
+export async function runInstaller({ args, platform, home, nodePath, companionEntryPath, store, output }: InstallerOptions) {
   if (platform !== SUPPORTED_PLATFORM) {
     output.error("The companion installer supports macOS only.");
     return FAILURE;
@@ -47,7 +49,7 @@ export async function runInstaller({ args, platform, home, nodePath, companionEn
   if (args.length === 1 && args[0] === UNINSTALL_FLAG) {
     await uninstall(paths);
     output.log("Removed the gh-copilot-in-chrome companion.");
-    return SUCCESS;
+    return forgetSavedToken(store, output);
   }
   output.error("Usage: npm run companion:install | npm run companion:uninstall");
   return FAILURE;
@@ -74,6 +76,23 @@ async function uninstall({ launcherDirectory, launcherPath, hostManifestPath }: 
   await rm(hostManifestPath, { force: true });
   await rm(launcherPath, { force: true });
   await rmdir(launcherDirectory).catch(() => undefined);
+}
+
+async function forgetSavedToken(store: InstallerOptions["store"], output: InstallerOptions["output"]) {
+  let tokenWasSaved: boolean;
+  try {
+    tokenWasSaved = await store.forgetToken();
+  } catch {
+    output.error("Could not remove the saved PAT from your macOS login keychain.");
+    output.error(`Delete the ${HOST_NAME} item in Keychain Access instead.`);
+    return FAILURE;
+  }
+  output.log(
+    tokenWasSaved
+      ? "Removed the saved PAT from your macOS login keychain."
+      : "No saved PAT was found in your macOS login keychain.",
+  );
+  return SUCCESS;
 }
 
 function quoteForShell(value: string) {

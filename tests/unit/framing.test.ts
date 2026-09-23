@@ -7,6 +7,7 @@ import {
   createFrameDecoder,
   encodeFrame,
 } from "../../src/companion/framing.ts";
+import { MAX_FIELD_LENGTH, MAX_PROMPT_LENGTH } from "../../src/protocol/messages.ts";
 
 function nativeLengthPrefix(length: number) {
   const prefix = Buffer.alloc(4);
@@ -58,18 +59,18 @@ describe("createFrameDecoder", () => {
 
   it("reassembles a frame split inside the length prefix and the payload", () => {
     const { frames, decoder } = collectFrames();
-    const frame = encodeFrame({ type: "send", model: "gpt-5-mini" });
+    const frame = encodeFrame({ type: "send", model: "gpt-5-mini", prompt: "Say hello." });
     decoder.push(frame.subarray(0, 2));
     decoder.push(frame.subarray(2, 9));
     expect(frames).toEqual([]);
     decoder.push(frame.subarray(9));
-    expect(frames).toEqual([{ type: "send", model: "gpt-5-mini" }]);
+    expect(frames).toEqual([{ type: "send", model: "gpt-5-mini", prompt: "Say hello." }]);
   });
 
   it("decodes several frames delivered in one chunk, in order", () => {
     const { frames, decoder } = collectFrames();
-    decoder.push(Buffer.concat([encodeFrame({ type: "stop" }), encodeFrame({ type: "send", model: "m" }), encodeFrame(1)]));
-    expect(frames).toEqual([{ type: "stop" }, { type: "send", model: "m" }, 1]);
+    decoder.push(Buffer.concat([encodeFrame({ type: "stop" }), encodeFrame({ type: "send", model: "m", prompt: "p" }), encodeFrame(1)]));
+    expect(frames).toEqual([{ type: "stop" }, { type: "send", model: "m", prompt: "p" }, 1]);
   });
 
   it("rejects an oversized frame from its length prefix alone", () => {
@@ -85,6 +86,21 @@ describe("createFrameDecoder", () => {
     const text = "x".repeat(MAX_INBOUND_FRAME_BYTES - 2);
     decoder.push(rawFrame(Buffer.from(JSON.stringify(text), "utf8")));
     expect(frames).toEqual([text]);
+  });
+
+  it("fits the largest send message even when every character is escaped", () => {
+    const { frames, decoder } = collectFrames();
+    const escapedEverywhere = "\u0001";
+    const message = {
+      type: "send",
+      model: escapedEverywhere.repeat(MAX_FIELD_LENGTH),
+      prompt: escapedEverywhere.repeat(MAX_PROMPT_LENGTH),
+    };
+    const frame = encodeFrame(message);
+    expect(frame.length).toBeGreaterThan(6 * (MAX_FIELD_LENGTH + MAX_PROMPT_LENGTH));
+
+    decoder.push(frame);
+    expect(frames).toEqual([message]);
   });
 
   it.each([
