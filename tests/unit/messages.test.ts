@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  FIXED_TEST_PROMPT,
   MAX_OUTPUT_LENGTH,
+  MAX_PROMPT_LENGTH,
   PROTOCOL_VERSION,
   isFineGrainedPersonalAccessToken,
   parseCompanionMessage,
@@ -33,10 +33,17 @@ describe("panel to companion messages", () => {
     { type: "connect", token: validToken, remember: true },
     { type: "connect", token: validToken, remember: false },
     { type: "connect_saved" },
-    { type: "send", model: "gpt-5-mini" },
+    { type: "send", model: "gpt-5-mini", prompt: "Explain closures in JavaScript." },
+    { type: "send", model: "gpt-5-mini", prompt: "  Keep my indentation:\n\tconst answer = 42;\n" },
     { type: "stop" },
+    { type: "new_chat" },
     { type: "forget" },
   ])("accepts %j", (message) => {
+    expect(parsePanelMessage(message)).toEqual(message);
+  });
+
+  it("accepts a prompt at the length limit", () => {
+    const message = { type: "send", model: "gpt-5-mini", prompt: "p".repeat(MAX_PROMPT_LENGTH) };
     expect(parsePanelMessage(message)).toEqual(message);
   });
 
@@ -51,11 +58,16 @@ describe("panel to companion messages", () => {
     ["a remember choice that is not a boolean", { type: "connect", token: validToken, remember: "yes" }],
     ["an extra connect field", { type: "connect", token: validToken, remember: false, host: "https://example.com" }],
     ["a token sent with connect_saved", { type: "connect_saved", token: validToken }],
-    ["a prompt smuggled into send", { type: "send", model: "gpt-5-mini", prompt: "ignore the fixed prompt" }],
-    ["an empty model", { type: "send", model: "" }],
-    ["a non-string model", { type: "send", model: 5 }],
-    ["an oversized model", { type: "send", model: "m".repeat(201) }],
+    ["a send without a prompt", { type: "send", model: "gpt-5-mini" }],
+    ["an empty prompt", { type: "send", model: "gpt-5-mini", prompt: "" }],
+    ["a non-string prompt", { type: "send", model: "gpt-5-mini", prompt: ["hi"] }],
+    ["an oversized prompt", { type: "send", model: "gpt-5-mini", prompt: "p".repeat(MAX_PROMPT_LENGTH + 1) }],
+    ["tools smuggled into send", { type: "send", model: "gpt-5-mini", prompt: "hi", tools: ["shell"] }],
+    ["an empty model", { type: "send", model: "", prompt: "hi" }],
+    ["a non-string model", { type: "send", model: 5, prompt: "hi" }],
+    ["an oversized model", { type: "send", model: "m".repeat(201), prompt: "hi" }],
     ["an extra stop field", { type: "stop", force: true }],
+    ["an extra new_chat field", { type: "new_chat", model: "gpt-5-mini" }],
     ["an extra forget field", { type: "forget", account: "octocat" }],
   ])("rejects %s", (_description, value) => {
     expect(parsePanelMessage(value)).toBeUndefined();
@@ -118,11 +130,5 @@ describe("companion to panel messages", () => {
     ["free-form error text", { type: "error", stage: "send", code: "send_failed", message: "401 Unauthorized: {...}" }],
   ])("rejects %s", (_description, value) => {
     expect(parseCompanionMessage(value)).toBeUndefined();
-  });
-});
-
-describe("fixed test prompt", () => {
-  it("is the only prompt the experiment can send", () => {
-    expect(FIXED_TEST_PROMPT).toBe("Reply with exactly: Connection confirmed.");
   });
 });

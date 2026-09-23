@@ -137,8 +137,8 @@ describe("openCompanionBridge", () => {
     expect(bridge.send({ type: "stop" })).toBe(false);
 
     port.deliver(hello);
-    expect(bridge.send({ type: "send", model: "gpt-5-mini" })).toBe(true);
-    expect(port.posted).toEqual([{ type: "send", model: "gpt-5-mini" }]);
+    expect(bridge.send({ type: "send", model: "gpt-5-mini", prompt: "Say hello." })).toBe(true);
+    expect(port.posted).toEqual([{ type: "send", model: "gpt-5-mini", prompt: "Say hello." }]);
 
     port.hostDisconnects("Native host has exited.");
     expect(bridge.send({ type: "stop" })).toBe(false);

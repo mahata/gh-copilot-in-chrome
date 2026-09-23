@@ -29,7 +29,7 @@ header > p:first-of-type { font-size: 1rem; color: var(--muted); }
 section { padding-block: 24px; border-top: 1px solid var(--line); }
 section > p, footer { color: var(--muted); }
 label:not(.checkbox) { display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 8px; }
-input[type="password"], select {
+input[type="password"], select, textarea {
   display: block;
   width: 100%;
   min-height: 44px;
@@ -41,7 +41,7 @@ input[type="password"], select {
   font: inherit;
 }
 input[type="checkbox"] { accent-color: var(--accent); flex: 0 0 auto; width: 18px; height: 18px; margin: 3px 0 0; }
-input[type="password"]:disabled, select:disabled { background: transparent; color: var(--muted); cursor: not-allowed; }
+input[type="password"]:disabled, select:disabled, textarea:disabled { background: transparent; color: var(--muted); cursor: not-allowed; }
 .checkbox { display: flex; gap: 10px; margin-block: 18px; font-size: 0.85rem; cursor: pointer; }
 .checkbox:has(input:disabled) { color: var(--muted); cursor: not-allowed; }
 .checkbox span { min-width: 0; overflow-wrap: anywhere; }
@@ -66,23 +66,37 @@ button.secondary { background: var(--surface); color: inherit; border-color: var
 button.secondary:hover:not(:disabled) { background: #e9edf3; }
 button.secondary:disabled { color: #667181; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
-.prompt-label { margin-top: 18px; margin-bottom: 6px; }
+textarea { min-height: 112px; resize: vertical; }
 pre {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  padding: 14px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font: 0.85rem/1.6 "SFMono-Regular", Consolas, monospace;
-  margin: 0 0 18px;
+  margin: 0 0 10px;
 }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .section-heading h2 { margin: 0; }
 #error { margin-top: 8px; color: var(--error); font-weight: 600; }
 #check-again { margin-top: 12px; }
-#output { min-height: 110px; max-height: 400px; overflow-y: auto; }
-#usage { font-size: 0.85rem; overflow-wrap: anywhere; }
+.transcript {
+  min-height: 120px;
+  max-height: min(60vh, 560px);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  padding: 2px 14px;
+  margin-bottom: 20px;
+}
+.transcript-empty { margin: 12px 0; color: var(--muted); }
+.turn { padding-block: 12px; }
+.turn + .turn { border-top: 1px solid var(--line); }
+.speaker { margin: 0 0 4px; font-size: 0.8rem; font-weight: 700; color: var(--muted); overflow-wrap: anywhere; }
+.prompt-text { background: var(--page); border-radius: 5px; padding: 8px 10px; }
+.reply:empty { display: none; }
+.turn-note, .usage { margin: 0 0 4px; font-size: 0.8rem; color: var(--muted); overflow-wrap: anywhere; }
+#prompt-form select { margin-bottom: 16px; }
+.hint { margin: 6px 0 12px; font-size: 0.8rem; color: var(--muted); }
+.prompt-limit { margin: -4px 0 12px; font-size: 0.85rem; font-weight: 600; color: var(--error); }
 footer { border-top: 1px solid var(--line); padding-top: 20px; }
 footer p { font-size: 0.8rem; }
 [hidden] { display: none !important; }

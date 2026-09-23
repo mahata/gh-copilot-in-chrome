@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Copilot Connection Experiment</title>
+    <title>Copilot in Chrome (unofficial)</title>
     <script type="module" src="/src/sidepanel/index.ts"></script>
   </head>
   <body>
     <main>
       <header>
-        <h1>Connection experiment</h1>
-        <p>Can Chrome reach GitHub Copilot through the official SDK?</p>
+        <h1>Copilot in Chrome (unofficial)</h1>
+        <p>Chat with GitHub Copilot from Chrome through the official SDK.</p>
         <p class="disclosure">This private, unofficial prototype has no network access of its own.
           It talks only to a companion on this Mac, which runs the official GitHub Copilot SDK.
           Page capture is outside its scope.</p>
@@ -55,29 +55,28 @@
         </form>
       </section>
 
-      <section aria-labelledby="inference-heading">
-        <h2 id="inference-heading">Try one response</h2>
-        <p>Only models the SDK reports as enabled for your account are offered.
-          The session has no tools, so it cannot read files or run commands.</p>
-        <label for="model">Model</label>
-        <select id="model" disabled></select>
-        <p class="prompt-label">The fixed test prompt (the SDK adds its own system instructions):</p>
-        <pre id="prompt"></pre>
-        <label class="checkbox">
-          <input id="inference-consent" type="checkbox" disabled>
-          <span>I approve one live request using my Copilot allowance.
-            Stopping may not prevent server-side work or charges.</span>
-        </label>
-        <button id="send" type="button" disabled>Send test prompt (live)</button>
-      </section>
-
-      <section aria-labelledby="result-heading">
+      <section aria-labelledby="chat-heading">
         <div class="section-heading">
-          <h2 id="result-heading">Response</h2>
-          <button id="stop" class="secondary" type="button" disabled>Stop</button>
+          <h2 id="chat-heading">Chat</h2>
+          <button id="new-chat" class="secondary" type="button" disabled>New chat</button>
         </div>
-        <pre id="output" aria-label="Response output" tabindex="0"></pre>
-        <p id="usage" hidden></p>
+        <p>Every prompt you send is a live request that uses your Copilot allowance at the chosen model's
+          billing multiplier. Stopping may not prevent server-side work or charges.</p>
+        <p>Only models the SDK reports as enabled for your account are offered. The session has no tools,
+          so it cannot read files or run commands, and replies appear as plain text.</p>
+        <div id="transcript" class="transcript" role="log" aria-label="Conversation" tabindex="0"></div>
+        <form id="prompt-form">
+          <label for="model">Model</label>
+          <select id="model" disabled></select>
+          <label for="prompt">Prompt</label>
+          <textarea id="prompt" rows="4" aria-describedby="prompt-hint prompt-limit" disabled></textarea>
+          <p id="prompt-hint" class="hint">⌘ Enter or Ctrl Enter sends. Enter starts a new line.</p>
+          <p id="prompt-limit" class="prompt-limit" hidden></p>
+          <div class="actions">
+            <button id="send" type="submit" disabled>Send</button>
+            <button id="stop" class="secondary" type="button" disabled>Stop</button>
+          </div>
+        </form>
       </section>
       <footer>
         <p>GitHub processes live requests under its account policies and data-handling terms.

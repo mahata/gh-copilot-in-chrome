@@ -6,6 +6,7 @@ import {
   connectedStatus,
   CREDENTIAL_ERROR_TEXT,
   modelOptionLabel,
+  promptTooLongText,
   readyStatus,
   SAVED_TOKEN_REJECTED_TEXT,
   SEND_ERROR_TEXT,
@@ -48,12 +49,17 @@ describe("side panel copy", () => {
 
   it("states the companion limits a request can hit", () => {
     expect(SEND_ERROR_TEXT.output_limit).toContain("65,536 characters");
-    expect(SEND_ERROR_TEXT.timeout).toContain("60 seconds");
+    expect(SEND_ERROR_TEXT.timeout).toContain("5 minutes");
+    expect(CONNECT_ERROR_TEXT.timeout).toContain("60 seconds");
+  });
+
+  it("explains a prompt that is too long to send", () => {
+    expect(promptTooLongText(40_000)).toBe("This prompt is 40,000 characters. Shorten it to 32,768 or fewer to send.");
   });
 
   it("tells the user how to start over when the conversation outgrows the model's context window", () => {
     expect(SEND_ERROR_TEXT.context_limit).toContain("context window");
-    expect(SEND_ERROR_TEXT.context_limit).toContain("Disconnect");
+    expect(SEND_ERROR_TEXT.context_limit).toContain("New chat");
   });
 
   it("tells the user how to install a missing companion", () => {

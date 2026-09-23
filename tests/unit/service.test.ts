@@ -3,11 +3,12 @@ import { GatewayFailure } from "../../src/companion/gateway.ts";
 import type { ConnectedAccount, CopilotGateway, TurnEvent, TurnRequest } from "../../src/companion/gateway.ts";
 import type { CredentialStore } from "../../src/companion/keychain.ts";
 import { ABORT_TIMEOUT_MS, createCompanionService } from "../../src/companion/service.ts";
-import { FIXED_TEST_PROMPT, MAX_OUTPUT_LENGTH, OPERATION_TIMEOUT_MS } from "../../src/protocol/messages.ts";
+import { CONNECT_TIMEOUT_MS, MAX_OUTPUT_LENGTH, TURN_TIMEOUT_MS } from "../../src/protocol/messages.ts";
 import type { CompanionMessage, TurnOutcome } from "../../src/protocol/messages.ts";
 
 const token = `github_pat_${"Z".repeat(82)}`;
 const savedToken = `github_pat_${"S".repeat(82)}`;
+const prompt = "Explain closures in JavaScript.";
 const account: ConnectedAccount = {
   login: "octocat",
   models: [
@@ -183,7 +184,7 @@ describe("connect", () => {
   it("times out, closes the gateway, and ignores a late success", async () => {
     const { service, gateways, emitted } = startService();
     service.handle({ type: "connect", token, remember: false });
-    await vi.advanceTimersByTimeAsync(OPERATION_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(CONNECT_TIMEOUT_MS);
     expect(emitted).toEqual([{ type: "error", stage: "connect", code: "timeout" }]);
     expect(itemAt(gateways, 0).gateway.close).toHaveBeenCalledOnce();
 
@@ -194,7 +195,7 @@ describe("connect", () => {
 
   it.each([
     ["fails", (fake: FakeGateway) => fake.connection.reject(new GatewayFailure("auth_failed")), "auth_failed"],
-    ["times out", () => vi.advanceTimersByTimeAsync(OPERATION_TIMEOUT_MS), "timeout"],
+    ["times out", () => vi.advanceTimersByTimeAsync(CONNECT_TIMEOUT_MS), "timeout"],
   ] as const)("reports a connection that %s only after its gateway has closed, refusing a retry meanwhile", async (_description, endConnection, code) => {
     const { service, gateways, emitted } = startService();
     service.handle({ type: "connect", token, remember: false });
@@ -264,7 +265,7 @@ describe("saved PAT", () => {
     ]);
     expect(JSON.stringify(emitted)).not.toContain(token);
 
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     expect(itemAt(gateways, 0).turns).toHaveLength(1);
   });
 
@@ -309,7 +310,7 @@ describe("saved PAT", () => {
     store.loadToken.mockImplementationOnce(() => reading.promise);
     const { service, gateways, emitted } = startService({ store });
     service.handle({ type: "connect_saved" });
-    await vi.advanceTimersByTimeAsync(OPERATION_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(CONNECT_TIMEOUT_MS);
     expect(emitted).toEqual([{ type: "error", stage: "connect", code: "timeout" }]);
 
     reading.resolve(savedToken);
@@ -384,23 +385,24 @@ describe("saved PAT", () => {
 describe("send", () => {
   it("requires a connection first", () => {
     const { service, emitted } = startService();
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     expect(emitted).toEqual([{ type: "error", stage: "send", code: "not_connected" }]);
   });
 
   it("only accepts a model offered by this connection", async () => {
     const { service, gateway, emitted } = await startConnected();
-    service.handle({ type: "send", model: "o1-preview" });
+    service.handle({ type: "send", model: "o1-preview", prompt });
     expect(emitted).toEqual([{ type: "error", stage: "send", code: "unknown_model" }]);
     expect(gateway.gateway.startTurn).not.toHaveBeenCalled();
   });
 
-  it("sends only the fixed prompt and streams deltas and usage until done", async () => {
+  it("sends the panel's prompt exactly as typed and streams deltas and usage until done", async () => {
     const { service, gateway, emitted } = await startConnected();
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    const typedPrompt = "  Keep my indentation:\n\tconst answer = 42;\n";
+    service.handle({ type: "send", model: "gpt-5-mini", prompt: typedPrompt });
     const turn = itemAt(gateway.turns, 0);
     expect(turn.request.model).toBe("gpt-5-mini");
-    expect(turn.request.prompt).toBe(FIXED_TEST_PROMPT);
+    expect(turn.request.prompt).toBe(typedPrompt);
 
     emitEvent(turn, { type: "delta", text: "Connection " });
     emitEvent(turn, { type: "delta", text: "" });
@@ -419,17 +421,17 @@ describe("send", () => {
 
   it("accepts another send after a turn finishes", async () => {
     const { service, gateway } = await startConnected();
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     itemAt(gateway.turns, 0).outcome.resolve("complete");
     await settle();
-    service.handle({ type: "send", model: "claude-sonnet-4.5" });
+    service.handle({ type: "send", model: "claude-sonnet-4.5", prompt });
     expect(gateway.turns).toHaveLength(2);
   });
 
   it("runs one turn at a time", async () => {
     const { service, gateway, emitted } = await startConnected();
-    service.handle({ type: "send", model: "gpt-5-mini" });
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     service.handle({ type: "connect", token, remember: false });
     expect(emitted).toEqual([
       { type: "error", stage: "send", code: "busy" },
@@ -440,10 +442,10 @@ describe("send", () => {
 
   it("maps coded and unexpected turn failures without echoing their text", async () => {
     const { service, gateway, emitted } = await startConnected();
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     itemAt(gateway.turns, 0).outcome.reject(new GatewayFailure("rate_limited"));
     await settle();
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     itemAt(gateway.turns, 1).outcome.reject(new Error(`request failed with ${token}`));
     await settle();
 
@@ -456,7 +458,7 @@ describe("send", () => {
 
   it("ignores a connect-only failure code from a turn", async () => {
     const { service, gateway, emitted } = await startConnected();
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     itemAt(gateway.turns, 0).outcome.reject(new GatewayFailure("models_unavailable"));
     await settle();
     expect(emitted).toEqual([{ type: "error", stage: "send", code: "send_failed" }]);
@@ -464,10 +466,10 @@ describe("send", () => {
 
   it("reports a conversation that outgrew the model's context window and stays connected", async () => {
     const { service, gateway, emitted } = await startConnected();
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     itemAt(gateway.turns, 0).outcome.reject(new GatewayFailure("context_limit"));
     await settle();
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
 
     expect(emitted).toEqual([{ type: "error", stage: "send", code: "context_limit" }]);
     expect(gateway.turns).toHaveLength(2);
@@ -478,8 +480,8 @@ describe("send", () => {
     gateway.gateway.startTurn.mockImplementationOnce(() => {
       throw new GatewayFailure("not_authorized");
     });
-    service.handle({ type: "send", model: "gpt-5-mini" });
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     expect(emitted).toEqual([{ type: "error", stage: "send", code: "not_authorized" }]);
     expect(gateway.turns).toHaveLength(1);
   });
@@ -488,7 +490,7 @@ describe("send", () => {
 describe("stop", () => {
   it("aborts the active turn and reports the stopped outcome", async () => {
     const { service, gateway, emitted } = await startConnected();
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     emitEvent(itemAt(gateway.turns, 0), { type: "delta", text: "Connec" });
     service.handle({ type: "stop" });
     expect(itemAt(gateway.turns, 0).abort).toHaveBeenCalledOnce();
@@ -508,10 +510,52 @@ describe("stop", () => {
   });
 });
 
+describe("new chat", () => {
+  it("starts a new conversation without reporting anything", async () => {
+    const { service, gateway, emitted } = await startConnected();
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
+    itemAt(gateway.turns, 0).outcome.resolve("complete");
+    await settle();
+    emitted.length = 0;
+
+    service.handle({ type: "new_chat" });
+    expect(gateway.gateway.startNewConversation).toHaveBeenCalledOnce();
+    expect(emitted).toEqual([]);
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
+    expect(gateway.turns).toHaveLength(2);
+  });
+
+  it("requires a connection first", () => {
+    const { service, emitted } = startService();
+    service.handle({ type: "new_chat" });
+    expect(emitted).toEqual([{ type: "error", stage: "send", code: "not_connected" }]);
+  });
+
+  it("refuses while connecting, while a turn runs, and while an abandoned turn ends", async () => {
+    const connecting = startService();
+    connecting.service.handle({ type: "connect", token, remember: false });
+    connecting.service.handle({ type: "new_chat" });
+    expect(connecting.emitted).toEqual([{ type: "error", stage: "send", code: "busy" }]);
+    expect(itemAt(connecting.gateways, 0).gateway.startNewConversation).not.toHaveBeenCalled();
+
+    const { service, gateway, emitted } = await startConnected();
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
+    service.handle({ type: "new_chat" });
+    emitEvent(itemAt(gateway.turns, 0), { type: "delta", text: "a".repeat(MAX_OUTPUT_LENGTH + 1) });
+    service.handle({ type: "new_chat" });
+    expect(emitted).toEqual([
+      { type: "error", stage: "send", code: "busy" },
+      { type: "delta", text: "a".repeat(MAX_OUTPUT_LENGTH) },
+      { type: "error", stage: "send", code: "busy" },
+    ]);
+    expect(gateway.gateway.startNewConversation).not.toHaveBeenCalled();
+  });
+});
+
 describe("limits", () => {
   it("keeps partial output up to the cap, then aborts with output_limit", async () => {
     const { service, gateway, emitted } = await startConnected();
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     const turn = itemAt(gateway.turns, 0);
     emitEvent(turn, { type: "delta", text: "a".repeat(MAX_OUTPUT_LENGTH - 3) });
     emitEvent(turn, { type: "delta", text: "bcdef" });
@@ -529,7 +573,7 @@ describe("limits", () => {
 
   it("never splits a surrogate pair at the output cap", async () => {
     const { service, gateway, emitted } = await startConnected();
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     emitEvent(itemAt(gateway.turns, 0), { type: "delta", text: "a".repeat(MAX_OUTPUT_LENGTH - 1) });
     emitEvent(itemAt(gateway.turns, 0), { type: "delta", text: "😀" });
     itemAt(gateway.turns, 0).outcome.resolve("stopped");
@@ -542,12 +586,12 @@ describe("limits", () => {
 
   it("reports the output limit only after the aborted turn ends, refusing sends meanwhile", async () => {
     const { service, gateway, emitted } = await startConnected();
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     const turn = itemAt(gateway.turns, 0);
     emitEvent(turn, { type: "delta", text: "a".repeat(MAX_OUTPUT_LENGTH + 1) });
     expect(turn.abort).toHaveBeenCalledOnce();
 
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     service.handle({ type: "connect", token, remember: false });
     expect(emitted).toEqual([
       { type: "delta", text: "a".repeat(MAX_OUTPUT_LENGTH) },
@@ -559,19 +603,21 @@ describe("limits", () => {
     turn.outcome.resolve("stopped");
     await settle();
     expect(emitted.at(-1)).toEqual({ type: "error", stage: "send", code: "output_limit" });
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     expect(gateway.turns).toHaveLength(2);
   });
 
   it("times out a turn, aborts it, and reports the timeout once the turn ends, ignoring its late output", async () => {
     const { service, gateway, emitted } = await startConnected();
-    service.handle({ type: "send", model: "gpt-5-mini" });
-    await vi.advanceTimersByTimeAsync(OPERATION_TIMEOUT_MS);
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     const turn = itemAt(gateway.turns, 0);
+    await vi.advanceTimersByTimeAsync(TURN_TIMEOUT_MS - 1);
+    expect(turn.abort).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
     expect(turn.abort).toHaveBeenCalledOnce();
 
     emitEvent(turn, { type: "delta", text: "late" });
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     expect(emitted).toEqual([{ type: "error", stage: "send", code: "busy" }]);
 
     turn.outcome.reject(new GatewayFailure("send_failed"));
@@ -585,8 +631,8 @@ describe("limits", () => {
 
   it("gives up on a runtime that has not ended an aborted turn in time", async () => {
     const { service, gateway, emitted, onRuntimeStuck } = await startConnected();
-    service.handle({ type: "send", model: "gpt-5-mini" });
-    await vi.advanceTimersByTimeAsync(OPERATION_TIMEOUT_MS + ABORT_TIMEOUT_MS - 1);
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
+    await vi.advanceTimersByTimeAsync(TURN_TIMEOUT_MS + ABORT_TIMEOUT_MS - 1);
     expect(emitted).toEqual([]);
     expect(onRuntimeStuck).not.toHaveBeenCalled();
 
@@ -604,10 +650,10 @@ describe("limits", () => {
 
   it("clears the operation timer when a turn finishes in time", async () => {
     const { service, gateway, emitted } = await startConnected();
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     itemAt(gateway.turns, 0).outcome.resolve("complete");
     await settle();
-    await vi.advanceTimersByTimeAsync(OPERATION_TIMEOUT_MS * 2);
+    await vi.advanceTimersByTimeAsync(TURN_TIMEOUT_MS * 2);
     expect(emitted).toEqual([{ type: "done", outcome: "complete" }]);
   });
 });
@@ -638,14 +684,14 @@ describe("shutdown", () => {
 
   it("closes the gateway, then ignores later messages and callbacks", async () => {
     const { service, gateway, emitted } = await startConnected();
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     await service.shutdown();
     expect(gateway.gateway.close).toHaveBeenCalledOnce();
 
     emitEvent(itemAt(gateway.turns, 0), { type: "delta", text: "late" });
     itemAt(gateway.turns, 0).outcome.resolve("complete");
-    service.handle({ type: "send", model: "gpt-5-mini" });
-    await vi.advanceTimersByTimeAsync(OPERATION_TIMEOUT_MS);
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
+    await vi.advanceTimersByTimeAsync(TURN_TIMEOUT_MS);
     await service.shutdown();
     expect(emitted).toEqual([]);
     expect(gateway.gateway.close).toHaveBeenCalledOnce();
@@ -690,7 +736,7 @@ describe("shutdown", () => {
 
   it("closes the gateway of an aborted turn that is still ending, without reporting it", async () => {
     const { service, gateway, emitted, onRuntimeStuck } = await startConnected();
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     emitEvent(itemAt(gateway.turns, 0), { type: "delta", text: "a".repeat(MAX_OUTPUT_LENGTH + 1) });
     emitted.length = 0;
     await service.shutdown();
@@ -717,18 +763,18 @@ describe("deadlines", () => {
     await settle();
     expect(vi.getTimerCount()).toBe(0);
 
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     itemAt(turns, 0).outcome.resolve("complete");
     await settle();
     expect(vi.getTimerCount()).toBe(0);
 
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     emitEvent(itemAt(turns, 1), { type: "delta", text: "a".repeat(MAX_OUTPUT_LENGTH + 1) });
     itemAt(turns, 1).outcome.resolve("stopped");
     await settle();
     expect(vi.getTimerCount()).toBe(0);
 
-    service.handle({ type: "send", model: "gpt-5-mini" });
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
     emitEvent(itemAt(turns, 2), { type: "delta", text: "a".repeat(MAX_OUTPUT_LENGTH + 1) });
     await service.shutdown();
     expect(vi.getTimerCount()).toBe(0);

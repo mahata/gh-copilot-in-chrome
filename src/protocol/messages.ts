@@ -1,12 +1,12 @@
 export const PROTOCOL_VERSION = 2;
 
-export const FIXED_TEST_PROMPT = "Reply with exactly: Connection confirmed.";
-
 export const MAX_TOKEN_LENGTH = 255;
 export const MAX_FIELD_LENGTH = 200;
 export const MAX_MODELS = 200;
+export const MAX_PROMPT_LENGTH = 32_768;
 export const MAX_OUTPUT_LENGTH = 65_536;
-export const OPERATION_TIMEOUT_MS = 60_000;
+export const CONNECT_TIMEOUT_MS = 60_000;
+export const TURN_TIMEOUT_MS = 300_000;
 
 export const ERROR_CODES_BY_STAGE = {
   connect: [
@@ -46,8 +46,9 @@ export type TurnOutcome = (typeof TURN_OUTCOMES)[number];
 export type PanelMessage =
   | { type: "connect"; token: string; remember: boolean }
   | { type: "connect_saved" }
-  | { type: "send"; model: string }
+  | { type: "send"; model: string; prompt: string }
   | { type: "stop" }
+  | { type: "new_chat" }
   | { type: "forget" };
 
 export type ModelSummary = { id: string; name: string; multiplier?: number };
@@ -86,11 +87,15 @@ export function parsePanelMessage(value: unknown): PanelMessage | undefined {
     case "connect_saved":
       return hasExactlyKeys(value, ["type"]) ? { type: "connect_saved" } : undefined;
     case "send":
-      return hasExactlyKeys(value, ["type", "model"]) && isBoundedField(value.model)
-        ? { type: "send", model: value.model }
+      return hasExactlyKeys(value, ["type", "model", "prompt"]) &&
+        isBoundedField(value.model) &&
+        isBoundedText(value.prompt, MAX_PROMPT_LENGTH)
+        ? { type: "send", model: value.model, prompt: value.prompt }
         : undefined;
     case "stop":
       return hasExactlyKeys(value, ["type"]) ? { type: "stop" } : undefined;
+    case "new_chat":
+      return hasExactlyKeys(value, ["type"]) ? { type: "new_chat" } : undefined;
     case "forget":
       return hasExactlyKeys(value, ["type"]) ? { type: "forget" } : undefined;
     default:

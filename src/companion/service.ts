@@ -1,7 +1,7 @@
 import { CONNECT_FAILURE_CODES, GatewayFailure, TURN_FAILURE_CODES } from "./gateway.ts";
 import type { ConnectFailureCode, CopilotGateway, Turn, TurnEvent, TurnFailureCode } from "./gateway.ts";
 import type { CredentialStore } from "./keychain.ts";
-import { FIXED_TEST_PROMPT, MAX_OUTPUT_LENGTH, OPERATION_TIMEOUT_MS } from "../protocol/messages.ts";
+import { CONNECT_TIMEOUT_MS, MAX_OUTPUT_LENGTH, TURN_TIMEOUT_MS } from "../protocol/messages.ts";
 import type { CompanionMessage, ErrorCode, PanelMessage } from "../protocol/messages.ts";
 
 export const ABORT_TIMEOUT_MS = 5_000;
@@ -73,7 +73,7 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
     }
     const connecting: Connecting = { phase: "connecting", gateway };
     state = connecting;
-    startDeadline(OPERATION_TIMEOUT_MS, () => failConnect(connecting, "timeout"));
+    startDeadline(CONNECT_TIMEOUT_MS, () => failConnect(connecting, "timeout"));
     return connecting;
   }
 
@@ -127,7 +127,7 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
     });
   }
 
-  function send(model: string) {
+  function send(model: string, prompt: string) {
     if (state.phase === "ready") return emit(sendError("not_connected"));
     if (state.phase !== "connected") return emit(sendError("busy"));
     if (!state.modelIds.has(model)) return emit(sendError("unknown_model"));
@@ -137,7 +137,7 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
     try {
       const turn = gateway.startTurn({
         model,
-        prompt: FIXED_TEST_PROMPT,
+        prompt,
         onEvent: (event) => forwardTurnEvent(sending, event),
       });
       sending = { phase: "sending", gateway, modelIds, turn, outputLength: 0 };
@@ -145,7 +145,7 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
       return emit(sendError(turnFailureCode(error)));
     }
     state = sending;
-    startDeadline(OPERATION_TIMEOUT_MS, () => abandonTurn(sending, "timeout"));
+    startDeadline(TURN_TIMEOUT_MS, () => abandonTurn(sending, "timeout"));
 
     sending.turn.outcome.then(
       (outcome) => endTurn(sending, { type: "done", outcome }),
@@ -206,6 +206,12 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
     if (state.phase === "sending") abortQuietly(state.turn);
   }
 
+  function startNewChat() {
+    if (state.phase === "ready") return emit(sendError("not_connected"));
+    if (state.phase !== "connected") return emit(sendError("busy"));
+    state.gateway.startNewConversation();
+  }
+
   function shutdown() {
     if (state.phase !== "closed") {
       clearDeadline();
@@ -224,9 +230,11 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
         case "connect_saved":
           return connectWithSavedToken();
         case "send":
-          return send(message.model);
+          return send(message.model, message.prompt);
         case "stop":
           return stop();
+        case "new_chat":
+          return startNewChat();
         case "forget":
           return forgetToken();
       }

@@ -7,11 +7,13 @@ import { runCompanion } from "../../src/companion/run.ts";
 import type { TurnOutcome } from "../../src/protocol/messages.ts";
 
 const FAKE_MODELS = [
+  { id: "fake-other", name: "Fake other reply", multiplier: 1 },
   { id: "fake-reply", name: "Fake reply", multiplier: 0 },
   { id: "fake-slow", name: "Fake slow reply", multiplier: 1 },
   { id: "fake-quota", name: "Fake quota failure", multiplier: 0.33 },
+  { id: "fake-crash", name: "Fake crash", multiplier: 1 },
 ];
-const FAKE_REPLY = ["Connection confirmed. ", "日本語 ", '<img src="x" onerror="alert(1)">'];
+const INERT_MARKUP = '<img src="x" onerror="alert(1)">';
 const STEP_DELAY_MS = 20;
 
 const runningMarker = join(requiredEnvironment("FAKE_COMPANION_STATE_DIR"), `${process.pid}.running`);
@@ -32,6 +34,8 @@ process.exitCode = await companion.done;
 rmSync(runningMarker, { force: true });
 
 function createFakeGateway(): CopilotGateway {
+  let turnsInConversation = 0;
+
   return {
     async connect(token) {
       await pause(STEP_DELAY_MS);
@@ -41,19 +45,25 @@ function createFakeGateway(): CopilotGateway {
       return { login: "octocat", models: FAKE_MODELS };
     },
 
-    startTurn({ model, onEvent }) {
+    startTurn({ model, prompt, onEvent }) {
+      turnsInConversation += 1;
+      const reply = [`Reply ${turnsInConversation} (${model}) to: `, prompt, " 日本語 ", INERT_MARKUP];
       let abortRequested = false;
       let wakeOnAbort = () => {};
       const abortReceived = new Promise<void>((resolve) => (wakeOnAbort = resolve));
       const outcome = (async (): Promise<TurnOutcome> => {
         await pause(STEP_DELAY_MS);
         if (model === "fake-quota") throw new GatewayFailure("quota_exceeded");
-        if (model === "fake-slow") {
+        if (model === "fake-slow" || model === "fake-crash") {
           onEvent({ type: "delta", text: "Partial reply " });
+          if (model === "fake-crash") {
+            await pause(STEP_DELAY_MS);
+            crash();
+          }
           await abortReceived;
           return "stopped";
         }
-        for (const text of FAKE_REPLY) {
+        for (const text of reply) {
           if (abortRequested) return "stopped";
           onEvent({ type: "delta", text });
           await pause(STEP_DELAY_MS);
@@ -70,7 +80,9 @@ function createFakeGateway(): CopilotGateway {
       };
     },
 
-    startNewConversation() {},
+    startNewConversation() {
+      turnsInConversation = 0;
+    },
 
     async close() {},
   };

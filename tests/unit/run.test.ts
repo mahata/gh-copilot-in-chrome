@@ -7,7 +7,7 @@ import type { CredentialStore } from "../../src/companion/keychain.ts";
 import { runCompanion } from "../../src/companion/run.ts";
 import { ABORT_TIMEOUT_MS } from "../../src/companion/service.ts";
 import { EXTENSION_ORIGIN } from "../../src/protocol/identity.ts";
-import { FIXED_TEST_PROMPT, OPERATION_TIMEOUT_MS } from "../../src/protocol/messages.ts";
+import { TURN_TIMEOUT_MS } from "../../src/protocol/messages.ts";
 import type { TurnOutcome } from "../../src/protocol/messages.ts";
 
 const token = `github_pat_${"R".repeat(82)}`;
@@ -197,11 +197,13 @@ describe("runCompanion", () => {
     stdin.write(encodeFrame({ type: "connect", token, remember: false }));
     await vi.waitFor(() => expect(frames).toEqual([hello, connected]));
 
-    stdin.write(Buffer.concat([encodeFrame({ type: "send", model: "gpt-5-mini" }), encodeFrame({ type: "stop" })]));
+    stdin.write(
+      Buffer.concat([encodeFrame({ type: "send", model: "gpt-5-mini", prompt: "Say hello." }), encodeFrame({ type: "stop" })]),
+    );
     await vi.waitFor(() =>
       expect(frames).toEqual([hello, connected, { type: "delta", text: "Connection confirmed." }, { type: "done", outcome: "stopped" }]),
     );
-    expect(gateway.startTurn).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-5-mini", prompt: FIXED_TEST_PROMPT }));
+    expect(gateway.startTurn).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-5-mini", prompt: "Say hello." }));
     stdin.end();
     await companion.done;
   });
@@ -281,10 +283,10 @@ describe("runCompanion", () => {
     const { frames, stdin, companion } = startCompanion({ gateway });
     stdin.write(encodeFrame({ type: "connect", token, remember: false }));
     await vi.waitFor(() => expect(frames).toEqual([hello, connected]));
-    stdin.write(encodeFrame({ type: "send", model: "gpt-5-mini" }));
+    stdin.write(encodeFrame({ type: "send", model: "gpt-5-mini", prompt: "Say hello." }));
     await vi.waitFor(() => expect(gateway.startTurn).toHaveBeenCalled());
 
-    await vi.advanceTimersByTimeAsync(OPERATION_TIMEOUT_MS + ABORT_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(TURN_TIMEOUT_MS + ABORT_TIMEOUT_MS);
     await expect(companion.done).resolves.toBe(1);
     expect(frames).toEqual([hello, connected, { type: "error", stage: "send", code: "timeout" }]);
     expect(gateway.close).toHaveBeenCalledOnce();

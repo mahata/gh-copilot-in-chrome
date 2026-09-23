@@ -13,6 +13,7 @@ const deniedToken = `github_pat_DENIED${"B".repeat(76)}`;
 const crashingToken = `github_pat_CRASH${"C".repeat(77)}`;
 const tokenWithoutModels = `github_pat_NOMODELS${"D".repeat(74)}`;
 const unsavableToken = `github_pat_NOSAVE${"F".repeat(76)}`;
+const inertMarkup = '<img src="x" onerror="alert(1)">';
 
 type OpenPanel = {
   context: BrowserContext;
@@ -100,10 +101,13 @@ async function connect(page: Page, token = approvedToken, { remember = true } = 
   await page.getByRole("button", { name: "Connect", exact: true }).click();
 }
 
-async function sendTestPrompt(page: Page, modelId: string) {
-  await page.getByLabel("Model", { exact: true }).selectOption(modelId);
-  await page.getByLabel("I approve one live request").check();
-  await page.getByRole("button", { name: "Send test prompt (live)" }).click();
+async function sendPrompt(page: Page, prompt: string) {
+  await page.getByLabel("Prompt", { exact: true }).fill(prompt);
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+}
+
+function conversationLog(page: Page) {
+  return page.getByRole("log", { name: "Conversation" });
 }
 
 test.afterEach(async () => {
@@ -134,7 +138,7 @@ test("connects with the saved PAT once Check again finds the companion", async (
   await expect(page.getByRole("status")).toContainText("Connected as octocat");
 });
 
-test("connects through the companion and renders the approved reply as inert text", async () => {
+test("chats through the companion with the cheapest model preselected and renders both sides as inert text", async () => {
   const { page, networkRequests, dialogs } = await openPanel();
   await expect(page.getByRole("status")).toContainText(/Companion ready \(Copilot SDK fake-\d+\)/);
   await expect(page.getByText("No prompt is sent.")).toBeVisible();
@@ -146,28 +150,179 @@ test("connects through the companion and renders the approved reply as inert tex
   await expect(page.getByRole("status")).toContainText("Connected as octocat");
   await expect(page.getByLabel("Fine-grained PAT", { exact: true })).toHaveValue("");
   await expect(connectButton).toBeDisabled();
-  await expect(page.getByLabel("Model", { exact: true }).locator("option")).toHaveText([
-    "Choose a model",
+  const modelSelect = page.getByLabel("Model", { exact: true });
+  await expect(modelSelect.locator("option")).toHaveText([
+    "Fake other reply (billing multiplier 1×)",
     "Fake reply (billing multiplier 0×)",
     "Fake slow reply (billing multiplier 1×)",
     "Fake quota failure (billing multiplier 0.33×)",
+    "Fake crash (billing multiplier 1×)",
   ]);
-  await expect(page.getByText("Reply with exactly: Connection confirmed.", { exact: true })).toBeVisible();
-
-  const sendButton = page.getByRole("button", { name: "Send test prompt (live)" });
-  await page.getByLabel("Model", { exact: true }).selectOption("fake-reply");
+  await expect(modelSelect).toHaveValue("fake-reply");
+  const conversation = conversationLog(page);
+  await expect(conversation).toHaveText("No messages yet.");
+  const sendButton = page.getByRole("button", { name: "Send", exact: true });
+  const newChatButton = page.getByRole("button", { name: "New chat", exact: true });
   await expect(sendButton).toBeDisabled();
-  await page.getByLabel("I approve one live request").check();
-  await sendButton.click();
+  await expect(newChatButton).toBeDisabled();
 
+  const prompt = "Explain <b>bold</b> & <i>italic</i> tags.";
+  await sendPrompt(page, prompt);
   await expect(page.getByRole("status")).toContainText("Response complete");
-  await expect(page.getByLabel("Response output")).toHaveText('Connection confirmed. 日本語 <img src="x" onerror="alert(1)">');
+  await expect(conversation.getByText("You", { exact: true })).toBeVisible();
+  await expect(conversation.locator(".prompt-text")).toHaveText(prompt);
+  await expect(conversation.getByText("Copilot (Fake reply)", { exact: true })).toBeVisible();
+  await expect(conversation.locator(".reply")).toHaveText(`Reply 1 (fake-reply) to: ${prompt} 日本語 ${inertMarkup}`);
+  await expect(conversation.getByText("SDK usage report: fake-reply, billing multiplier 0×.")).toBeVisible();
   await expect(page.locator("img")).toHaveCount(0);
-  await expect(page.getByText("SDK usage report")).toContainText("fake-reply");
-  await expect(page.getByLabel("I approve one live request")).not.toBeChecked();
+  await expect(conversation.locator("b, i")).toHaveCount(0);
+  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("Prompt", { exact: true })).toBeFocused();
   await expect(sendButton).toBeDisabled();
+  await expect(newChatButton).toBeEnabled();
   expect(dialogs).toEqual([]);
   expect(networkRequests).toEqual([]);
+});
+
+test("keeps the conversation across turns and model changes until New chat starts over", async () => {
+  const { page } = await openPanel();
+  await connect(page);
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+  const conversation = conversationLog(page);
+  const replies = conversation.locator(".reply");
+  const newChatButton = page.getByRole("button", { name: "New chat", exact: true });
+
+  await sendPrompt(page, "First question");
+  await expect(page.getByRole("status")).toContainText("Response complete");
+  await sendPrompt(page, "Second question");
+  await expect(page.getByRole("status")).toContainText("Response complete");
+  await page.getByLabel("Model", { exact: true }).selectOption("fake-other");
+  await sendPrompt(page, "Third question");
+  await expect(page.getByRole("status")).toContainText("Response complete");
+
+  await expect(conversation.getByRole("article")).toHaveCount(3);
+  await expect(replies).toHaveText([
+    /^Reply 1 \(fake-reply\) to: First question/,
+    /^Reply 2 \(fake-reply\) to: Second question/,
+    /^Reply 3 \(fake-other\) to: Third question/,
+  ]);
+  await expect(conversation.getByText("Copilot (Fake other reply)", { exact: true })).toBeVisible();
+
+  await newChatButton.click();
+  await expect(page.getByRole("status")).toHaveText("New chat started. Copilot no longer sees the earlier messages.");
+  await expect(conversation).toHaveText("No messages yet.");
+  await expect(newChatButton).toBeDisabled();
+  await expect(page.getByLabel("Prompt", { exact: true })).toBeFocused();
+  await expect(page.getByLabel("Model", { exact: true })).toHaveValue("fake-other");
+
+  await sendPrompt(page, "Fresh question");
+  await expect(page.getByRole("status")).toContainText("Response complete");
+  await expect(replies).toHaveText([/^Reply 1 \(fake-other\) to: Fresh question/]);
+});
+
+test("sends with Command or Control Enter, keeps Enter for new lines, and ignores blank prompts", async () => {
+  const { page } = await openPanel();
+  await connect(page);
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+  const promptInput = page.getByLabel("Prompt", { exact: true });
+  const sendButton = page.getByRole("button", { name: "Send", exact: true });
+  const conversation = conversationLog(page);
+  await promptInput.evaluate((textarea: HTMLTextAreaElement) =>
+    textarea.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") textarea.dataset.lastEnter = event.defaultPrevented ? "consumed" : "typed";
+    }),
+  );
+
+  await promptInput.fill(" \n\t ");
+  await expect(sendButton).toBeDisabled();
+  await promptInput.press("Meta+Enter");
+  await promptInput.press("Control+Enter");
+  await expect(promptInput).toHaveValue(" \n\t ");
+  await expect(promptInput).toHaveAttribute("data-last-enter", "consumed");
+  await expect(conversation).toHaveText("No messages yet.");
+
+  const prompt = "  Keep this indentation\nand this second line";
+  await promptInput.fill("  Keep this indentation");
+  await promptInput.press("Enter");
+  await expect(promptInput).toHaveAttribute("data-last-enter", "typed");
+  await promptInput.pressSequentially("and this second line");
+  await expect(promptInput).toHaveValue(prompt);
+  await promptInput.press("Control+Enter");
+  await expect(promptInput).toHaveAttribute("data-last-enter", "consumed");
+  await expect(page.getByRole("status")).toContainText("Response complete");
+  await expect(promptInput).toHaveValue("");
+  await expect(conversation.locator(".prompt-text")).toHaveJSProperty("textContent", prompt);
+  await expect(conversation.locator(".reply")).toHaveJSProperty(
+    "textContent",
+    `Reply 1 (fake-reply) to: ${prompt} 日本語 ${inertMarkup}`,
+  );
+
+  await promptInput.fill("Now with Command");
+  await promptInput.press("Meta+Enter");
+  await expect(page.getByRole("status")).toContainText("Response complete");
+  await expect(promptInput).toHaveValue("");
+  await expect(conversation.locator(".reply").last()).toContainText("Reply 2 (fake-reply) to: Now with Command");
+});
+
+test("waits for an input method to finish composing before Command or Control Enter sends", async () => {
+  const { page } = await openPanel();
+  await connect(page);
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+  const promptInput = page.getByLabel("Prompt", { exact: true });
+  const conversation = conversationLog(page);
+  const inputMethod = await page.context().newCDPSession(page);
+
+  await promptInput.focus();
+  await inputMethod.send("Input.imeSetComposition", { text: "にほんご", selectionStart: 4, selectionEnd: 4 });
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
+  await promptInput.press("ControlOrMeta+Enter");
+  await expect(conversation).toHaveText("No messages yet.");
+
+  await inputMethod.send("Input.insertText", { text: "日本語" });
+  await expect(promptInput).toHaveValue("日本語");
+  await promptInput.press("ControlOrMeta+Enter");
+  await expect(conversation.locator(".prompt-text")).toHaveText("日本語");
+});
+
+test("follows a streaming reply only while the reader stays at the end of the conversation", async () => {
+  const { page } = await openPanel();
+  await connect(page);
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+  const conversation = conversationLog(page);
+
+  await sendPrompt(page, "Answer at length.\n".repeat(60));
+  await expect(page.getByRole("status")).toContainText("Response complete");
+  expect(await conversation.evaluate((log) => log.scrollHeight - log.scrollTop - log.clientHeight)).toBeLessThanOrEqual(1);
+
+  await page.getByLabel("Model", { exact: true }).selectOption("fake-slow");
+  await sendPrompt(page, "Take your time.");
+  await expect(conversation.locator(".reply").last()).toHaveText("Partial reply");
+  await conversation.evaluate((log) => log.scrollTo({ top: 0 }));
+  await page.getByRole("button", { name: "Stop", exact: true }).click();
+  await expect(conversation.locator(".turn-note").last()).toHaveText("Stopped. Output may be incomplete.");
+  expect(await conversation.evaluate((log) => log.scrollTop)).toBe(0);
+});
+
+test("explains a prompt over the length limit and refuses to send it", async () => {
+  const { page } = await openPanel();
+  await connect(page);
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+  const promptInput = page.getByLabel("Prompt", { exact: true });
+  const sendButton = page.getByRole("button", { name: "Send", exact: true });
+  const shortcutHint = "⌘ Enter or Ctrl Enter sends. Enter starts a new line.";
+  const limitNotice = page.getByText("This prompt is 32,769 characters. Shorten it to 32,768 or fewer to send.");
+
+  await promptInput.fill("x".repeat(32_769));
+  await expect(limitNotice).toBeVisible();
+  await expect(promptInput).toHaveAccessibleDescription(/Shorten it to 32,768 or fewer to send\.$/);
+  await expect(sendButton).toBeDisabled();
+  await promptInput.press("ControlOrMeta+Enter");
+  await expect(conversationLog(page)).toHaveText("No messages yet.");
+
+  await promptInput.press("Backspace");
+  await expect(limitNotice).toBeHidden();
+  await expect(promptInput).toHaveAccessibleDescription(shortcutHint);
+  await expect(sendButton).toBeEnabled();
 });
 
 test("remembers an accepted PAT in the Keychain and connects with it when the panel opens again", async () => {
@@ -261,7 +416,7 @@ test("reports a rejected token without reflecting it and allows another attempt"
   await expect(page.getByRole("alert")).toContainText("auth_failed");
   await expect(page.getByRole("status")).toContainText("Companion ready");
   await expect(page.locator("body")).not.toContainText(deniedToken);
-  await expect(page.getByRole("button", { name: "Send test prompt (live)" })).toBeDisabled();
+  await expect(page.getByLabel("Prompt", { exact: true })).toBeDisabled();
   await connect(page);
   await expect(page.getByRole("status")).toContainText("Connected as octocat");
   await expect(page.getByRole("alert")).toBeHidden();
@@ -288,33 +443,60 @@ test("says so when the account has no enabled models", async () => {
   await expect(page.getByRole("status")).toContainText("no enabled models");
   await expect(page.getByLabel("Model", { exact: true })).toBeDisabled();
   await expect(page.getByLabel("Model", { exact: true }).locator("option")).toHaveText(["No enabled models were returned"]);
-  await expect(page.getByRole("button", { name: "Send test prompt (live)" })).toBeDisabled();
+  await expect(page.getByLabel("Prompt", { exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
 });
 
-test("stops a streaming reply and keeps the partial output marked incomplete", async () => {
+test("stops a streaming reply, marks it incomplete, and keeps the prompt drafted meanwhile", async () => {
   const { page } = await openPanel();
   await connect(page);
-  await sendTestPrompt(page, "fake-slow");
-  await expect(page.getByLabel("Response output")).toContainText("Partial reply");
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+  await page.getByLabel("Model", { exact: true }).selectOption("fake-slow");
+  await sendPrompt(page, "Take your time.");
+  const conversation = conversationLog(page);
+  const sendButton = page.getByRole("button", { name: "Send", exact: true });
+  const stopButton = page.getByRole("button", { name: "Stop", exact: true });
+  await expect(conversation.locator(".reply")).toHaveText("Partial reply");
+  await expect(conversation).toHaveAttribute("aria-busy", "true");
+  await expect(page.getByLabel("Model", { exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "New chat", exact: true })).toBeDisabled();
 
-  await page.getByRole("button", { name: "Stop", exact: true }).click();
+  await page.getByLabel("Prompt", { exact: true }).fill("Next question");
+  await expect(sendButton).toBeDisabled();
+  await stopButton.click();
+
   await expect(page.getByRole("status")).toContainText("Stopped. Output may be incomplete.");
-  await expect(page.getByLabel("Response output")).toContainText("Partial reply");
-  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeDisabled();
-  await expect(page.getByLabel("Model", { exact: true })).toBeEnabled();
+  await expect(conversation.locator(".turn-note")).toHaveText("Stopped. Output may be incomplete.");
+  await expect(conversation.locator(".reply")).toHaveText("Partial reply");
+  await expect(conversation).toHaveAttribute("aria-busy", "false");
+  await expect(stopButton).toBeDisabled();
+  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue("Next question");
+  await expect(sendButton).toBeEnabled();
+  await expect(page.getByRole("button", { name: "New chat", exact: true })).toBeEnabled();
 });
 
-test("reports a failed request and keeps the connection", async () => {
+test("marks a failed request in the conversation and keeps the connection", async () => {
   const { page } = await openPanel();
   await connect(page);
-  await sendTestPrompt(page, "fake-quota");
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+  await page.getByLabel("Model", { exact: true }).selectOption("fake-quota");
+  await sendPrompt(page, "Use the costly model.");
 
   await expect(page.getByRole("alert")).toContainText("quota_exceeded");
+  await expect(page.getByRole("status")).toContainText("You are still connected.");
+  const conversation = conversationLog(page);
+  await expect(conversation.locator(".turn-note")).toHaveText("The request did not finish (quota_exceeded).");
+  await expect(conversation.locator(".reply")).toBeEmpty();
   await expect(page.getByLabel("Model", { exact: true })).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Send test prompt (live)" })).toBeDisabled();
+
+  await page.getByLabel("Model", { exact: true }).selectOption("fake-reply");
+  await sendPrompt(page, "Use the free model.");
+  await expect(page.getByRole("status")).toContainText("Response complete");
+  await expect(page.getByRole("alert")).toBeHidden();
+  await expect(conversation.getByRole("article")).toHaveCount(2);
 });
 
-test("recovers after the companion exits unexpectedly", async () => {
+test("recovers after the companion exits while connecting", async () => {
   const { page } = await openPanel();
   await connect(page, crashingToken);
 
@@ -324,11 +506,33 @@ test("recovers after the companion exits unexpectedly", async () => {
   await expect(page.getByRole("status")).toContainText("Companion ready");
 });
 
-test("disconnecting starts a fresh companion that waits for Connect with saved PAT", async () => {
+test("keeps an interrupted reply visible when the companion exits mid-response, then reconnects", async () => {
+  const { page } = await openPanel();
+  await connect(page);
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+  await page.getByLabel("Model", { exact: true }).selectOption("fake-crash");
+  await sendPrompt(page, "Crash while replying.");
+
+  await expect(page.getByRole("alert")).toContainText("companion_exited");
+  const conversation = conversationLog(page);
+  await expect(conversation.locator(".reply")).toHaveText("Partial reply");
+  await expect(conversation.locator(".turn-note")).toHaveText("The companion stopped before the response finished.");
+  await expect(conversation).toHaveAttribute("aria-busy", "false");
+  await expect(page.getByLabel("Prompt", { exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "New chat", exact: true })).toBeDisabled();
+
+  await page.getByRole("button", { name: "Check again" }).click();
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+  await expect(conversation).toHaveText("No messages yet.");
+});
+
+test("disconnecting clears the conversation and starts a fresh companion that waits for Connect with saved PAT", async () => {
   const { page, runningCompanions } = await openPanel({ savedToken: approvedToken });
   await expect(page.getByRole("status")).toContainText("Connected as octocat");
-  await sendTestPrompt(page, "fake-reply");
+  await sendPrompt(page, "Remember this conversation?");
   await expect(page.getByRole("status")).toContainText("Response complete");
+  await page.getByLabel("Prompt", { exact: true }).fill("An unsent draft");
   expect(runningCompanions()).toHaveLength(1);
   const [connectedCompanion] = runningCompanions();
 
@@ -338,8 +542,9 @@ test("disconnecting starts a fresh companion that waits for Connect with saved P
   expect(runningCompanions()).not.toContain(connectedCompanion);
   await expect(page.getByRole("button", { name: "Disconnect" })).toBeHidden();
   await expect(page.getByLabel("Model", { exact: true })).toBeDisabled();
-  await expect(page.getByLabel("Response output")).toHaveText("No response yet.");
-  await expect(page.getByText("SDK usage report")).toBeHidden();
+  await expect(page.getByLabel("Prompt", { exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue("");
+  await expect(conversationLog(page)).toHaveText("No messages yet.");
 
   await page.getByRole("button", { name: "Connect with saved PAT" }).click();
   await expect(page.getByRole("status")).toContainText("Connected as octocat");
@@ -376,9 +581,14 @@ test("fits a narrow sidebar and a wider extension page", async () => {
   const { page } = await openPanel();
   await connect(page);
   await expect(page.getByRole("status")).toContainText("Connected as octocat");
+  await sendPrompt(page, `Wrap ${"unbroken".repeat(40)} text.`);
+  await expect(page.getByRole("status")).toContainText("Response complete");
+  const conversation = conversationLog(page);
   for (const width of [320, 720]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    expect(await conversation.evaluate((log) => log.scrollWidth <= log.clientWidth)).toBe(true);
+    await page.evaluate(() => scrollTo(0, 0));
     await page.screenshot({ path: `test-results/panel-${width}.png`, fullPage: true });
   }
 });
