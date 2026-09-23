@@ -1,85 +1,171 @@
 # gh-copilot-in-chrome
 
-A private experiment for a Chrome sidebar using **GitHub Copilot directly**, without a
-local companion or a hosted relay. This is not affiliated with GitHub.
+A private experiment: a Chrome side panel that reaches GitHub Copilot through the
+official [Copilot SDK](https://github.com/github/copilot-sdk), which runs in a small
+companion process on your Mac. This project is not affiliated with GitHub.
 
-**Current status:** the offline feasibility harness is implemented. Fine-grained PAT
-compatibility, live inference, billing attribution, and permission to distribute an
-integration using these endpoints remain **unverified**. Passing the demo or automated
-tests does not establish any of them.
+**Current status:** the side panel, the companion and its macOS installer are built and
+tested against a scripted fake companion. Whether a real fine-grained PAT authenticates
+through the SDK, which models it lists and how usage is billed are all **unverified** until
+you run the [live check](#live-check).
 
-## Build and load
+## Why a local companion
 
-Requires Node.js 22.12+ (Node.js 24 LTS recommended), npm, and Chrome 120+.
-Node.js is a build tool here, not an end-user companion process.
+The first version called GitHub's undocumented token exchange,
+`https://api.github.com/copilot_internal/v2/token`, directly from the extension. A
+fine-grained PAT got **HTTP 404**. Clients that use that endpoint exchange tokens from
+Copilot's editor OAuth apps. Getting past it would have meant borrowing those app IDs or
+impersonating an editor, which the experiment's stop rule forbids. The direct flow is
+therefore gone.
+
+The SDK
+[supports fine-grained PATs](https://github.com/github/copilot-sdk/blob/main/docs/auth/authenticate.md),
+so the experiment now uses that route instead:
+
+```mermaid
+flowchart LR
+  Panel["Side panel<br/>(no network access)"] -- "Chrome native messaging<br/>(stdio, JSON)" --> Companion["Companion<br/>(Node.js on this Mac)"]
+  Companion -- "Copilot SDK" --> Runtime["Bundled Copilot runtime"]
+  Runtime -- HTTPS --> GitHub["GitHub Copilot"]
+```
+
+- The extension cannot reach the network. It has no host permissions, and its CSP sets
+  `connect-src 'none'`. It can talk only to the companion.
+- Chrome starts the companion when the panel opens, so the panel can tell whether it is
+  installed. Nothing is sent to GitHub until you choose **Connect (live)**.
+- The companion lives only as long as the panel's connection. **Clear credentials and
+  output** or closing the panel ends it, along with its PAT and SDK session.
+
+## Requirements
+
+- macOS with Google Chrome 120 or later. The installer registers the companion with Google
+  Chrome only, not with Chromium or other Chrome channels.
+- Node.js 22.18 or later, which runs the companion's TypeScript directly. Node.js 24 LTS is
+  recommended.
+- A GitHub account with Copilot access, and permission to create a fine-grained PAT for
+  it.
+
+## Install
 
 ```sh
 npm ci
 npm run build
+npm run companion:install
 ```
 
-In Chrome, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**,
-and select this checkout's `dist/` directory. Open the extension from the toolbar to
-show its side panel. Reload the extension after rebuilding.
+In Chrome, open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**,
+and select this checkout's `dist/` directory. The manifest's `key` pins the extension ID
+to `hdmfkhdfamhcfglofebjnoepkbbbihkg`, and the companion accepts only that ID. Open the
+extension from the toolbar. The status line should read "Companion ready (Copilot SDK
+*version*). Not connected to GitHub."
 
-Choose **Run offline demo** first. It exercises the same bounded stream parser and
-adapter against synthetic responses, including Japanese text, without network access.
-It does not require a token.
+`npm run companion:install` writes two files:
 
-## Optional live feasibility check
+- `~/Library/Application Support/gh-copilot-in-chrome/companion`: a launcher that runs this
+  checkout's `src/companion/main.ts` with the Node.js that ran the installer.
+- `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/io.github.mahata.gh_copilot_in_chrome.json`:
+  registers the launcher with Chrome for this extension only.
 
-Live checks are a separate, user-authorized step. They are never run by the test suite
-or on panel startup. Do not provide credentials in chat, issues, commits, screenshots,
-logs, or CI.
+Run it again after moving this checkout or changing Node.js. To remove the companion, run
+`npm run companion:uninstall`, then remove the extension in `chrome://extensions`.
 
-1. Create a fresh, expiring **fine-grained PAT** with your personal account as resource
-   owner and only the account-level **Copilot Requests** permission. This permission is
-   documented for the CLI/SDK; compatibility with this direct flow is not yet proven.
-2. Enter it directly in the extension's password field. Review the disclosure and select
-   **Check PAT (live)** to authorize token exchange and model discovery only.
-3. If discovery succeeds, select a model. Only entries explicitly identifying themselves
-   as enabled chat models with `/chat/completions` support are offered.
-4. Separately approve allowance consumption and select **Send test prompt (live)**. The
-   entire prompt is fixed and visible: `Reply with exactly: Connection confirmed.`
-   Each send requires a new approval; there is no automatic retry.
-5. Verify usage in your GitHub account separately. Record the operation stage, error
-   code or success, Chrome version, and enabled model ID. Do not export request headers,
-   raw authentication responses, or tokens.
-6. Select **Clear credentials and output**, then revoke the experimental PAT when done.
+## Live check
 
-Stop on authentication/policy denial or unsupported metadata. Do not try borrowed
-OAuth application IDs, editor impersonation, token extraction, model-policy changes,
-or alternative credential flows to bypass the result. A passing request demonstrates
-technical access only, not a supported API contract or approval for public release.
+The live check is a separate step that you authorize yourself. Neither the test suite nor
+opening the panel runs it. Never put a credential in chat, issues, commits, screenshots,
+logs or CI.
+
+1. Create a fresh, expiring
+   [fine-grained PAT](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/authenticate-copilot-cli)
+   with your personal account as resource owner and only the **Copilot Requests** account
+   permission.
+2. Paste it into **Fine-grained PAT**, check the authorization box, and choose **Connect
+   (live)**. The companion starts the SDK, which checks the PAT with GitHub and lists
+   models. No prompt is sent.
+3. Choose one of the models the SDK reports as enabled. Each option shows the billing
+   multiplier the SDK reported.
+4. Check the approval box and choose **Send test prompt (live)**. The prompt is fixed:
+   `Reply with exactly: Connection confirmed.` The SDK adds its own system instructions.
+   Each send needs a fresh approval, and nothing is retried automatically.
+5. Record the status line, any error code, the Chrome and SDK versions, the model ID and
+   the "SDK usage report" line. Check usage in your GitHub account separately. Do not record
+   tokens, raw server responses or headers.
+6. Choose **Clear credentials and output** or close the panel, then revoke the PAT.
+
+If something fails:
+
+- **`auth_failed`:** GitHub did not accept the PAT. Check its owner, permission and
+  expiry. If a correct PAT still fails, record the result and stop.
+- **No enabled models:** the panel offers only models whose SDK metadata says
+  `policy.state: "enabled"`, and it does not guess when that field is missing. Record the
+  result and stop, because the filter may need revisiting.
+- **`sdk_start_failed`:** the SDK's platform runtime may be missing. It is an optional
+  dependency (`@github/copilot-sdk-darwin-arm64` or `-darwin-x64`), so run `npm ci` without
+  `--omit=optional`.
+- **`companion_*` codes:** the panel names the fix. Most need `npm run companion:install`
+  followed by **Check again**.
+
+Stop when GitHub denies access. Do not work around a denial with a stored login, a `gh`
+token, a classic PAT, a borrowed OAuth app ID, editor impersonation or a custom
+integration ID. A passing check shows technical access through the SDK for your own
+account. It does not mean approval to distribute this or to offer it to other people.
 
 ## Boundaries
 
-- The extension has only `sidePanel` and four narrow API host permissions. It has no
-  content scripts, page-capture permissions, native messaging, tools, or external message
-  bridge. Page-aware chat is a later milestone, gated on this experiment.
-- PATs are sent only to `https://api.github.com/copilot_internal/v2/token`. Temporary
-  Copilot tokens are sent only to the exact individual/business/enterprise Copilot API
-  origins allowlisted in the manifest and adapter. Endpoint redirects are rejected.
-  No endpoint is guessed if metadata is missing.
-- Requests use browser `fetch` with cookies omitted and no editor-identity headers.
-  Unknown inference protocols, tool calls, and model-policy states are rejected, not
-  silently treated as compatible.
-- Credentials, model selection, and output exist only in panel memory. Reloading or
-  closing it clears them; reopening starts fresh. Neither persistent nor session storage
-  is used in this initial harness. This is intentionally stricter than the eventual
-  browser-session chat history design.
-- The password field is cleared immediately on submission. Errors name the failing stage
-  but never reflect server response bodies. Output uses text rendering, not HTML.
-- **Stop** aborts the client request and retains partial output as incomplete. It does
-  not guarantee cancellation or avoidance of charges on GitHub's side.
-- The harness applies a 60-second operation timeout, 256 KiB JSON-response limit,
-  1 MiB stream limit, 64 KiB event/output limits, and one operation at a time per panel.
-  A limit failure is explicit; no content is silently truncated.
-- GitHub receives live credentials/prompts and applies its own retention/account terms.
-  Local clearing does not retract those requests. Panel memory is not a guarantee
-  against browser/OS crash artifacts or a compromised extension/browser.
+The extension:
 
-## Development checks
+- Requests only `sidePanel` and `nativeMessaging`. It has no host permissions, no content
+  scripts and no access to pages.
+- Sends the companion a PAT only if it starts with `github_pat_`, and clears the field on
+  submission. It stores nothing, so credentials, models and output live only in memory.
+- Renders responses as text, never as HTML. Errors show fixed text and a code, never the
+  server's text or the token.
+
+The companion:
+
+- Exits unless Chrome started it for this extension. Chrome's host manifest also allows only
+  this extension ID.
+- Accepts three messages: connect with a PAT, send using a model from this connection's
+  list, and stop. It never accepts prompt text, because the fixed prompt lives in the
+  companion.
+- Configures the SDK:
+  - `mode: "empty"`, `useLoggedInUser: false` and a minimal environment, so the runtime
+    cannot fall back to a stored CLI login, the keychain or a token from your shell.
+  - No tools (`availableTools: []`), and every permission request is rejected.
+  - A fresh session for each send, disconnected afterwards. Sub-agent events are ignored.
+- Starts the runtime with only a system `PATH`, plus `HOME` and `TMPDIR` pointing into a new
+  private temporary directory, and the variables the SDK adds. Proxy and custom CA settings
+  such as `HTTPS_PROXY` or `NODE_EXTRA_CA_CERTS` are not passed on, so networks that
+  require them will not work.
+- Enforces limits: 64 KiB per inbound message, 1 MiB per outbound message (Chrome's limit),
+  65,536 characters of output, 60 seconds per connect or send, and one operation at a time.
+  The output and time limits end a request with an explicit error and keep the partial
+  output.
+- Handles **Stop** by aborting the SDK session and keeping the partial output, marked
+  incomplete. It may not prevent server-side work or charges.
+- On exit, stops the runtime and deletes its temporary directory.
+
+Accepted risks:
+
+- While connected, the PAT sits in the companion's memory and in the runtime's
+  `COPILOT_SDK_AUTH_TOKEN` environment variable. Other processes running as your macOS user
+  can read it there. Use a short-lived PAT and clear when you are done.
+- Because the manifest's public `key` fixes the ID, any unpacked extension with the same key
+  can talk to the companion. Loading one requires access to your Chrome profile.
+- If the companion is still running a few seconds after the panel disconnects, Chrome
+  force-quits it. Its temporary directory (`$TMPDIR/gh-copilot-in-chrome-*`) can then remain,
+  holding the runtime's session log with the prompt and response but not the token. Delete
+  leftovers by hand.
+- The runtime keeps its default integration ID, `copilot-developer-cli`. The companion only
+  names itself `gh-copilot-in-chrome` in the SDK's `clientInfo`, which labels the runtime's
+  telemetry.
+
+GitHub receives the PAT, the fixed prompt with the SDK's system instructions, the chosen
+model, and whatever request metadata and telemetry the official runtime sends. This project
+neither configures nor suppresses that telemetry. Clearing locally does not retract anything
+already sent.
+
+## Development
 
 ```sh
 npm test
@@ -87,28 +173,39 @@ npx playwright install chromium
 npm run check
 ```
 
-`npm run check` runs unit tests, strict TypeScript checking, a production build, and
-Playwright tests loading the packaged MV3 extension in an isolated Chrome for Testing
-profile. All application HTTP requests in browser tests are fulfilled with synthetic
-fixtures or blocked; no real PAT or Copilot allowance is used.
+`npm run check` runs the unit tests, strict TypeScript checking, a production build and the
+browser tests. The browser tests:
 
-The browser tests cover separate approvals, safe text output, narrow permissions,
-credential clearing, and responsive layout. Unit tests cover credential routing,
-endpoint validation, refresh/expiry, errors, cancellation, and incomplete/oversized
-streams. Tests do not establish live token compatibility, endpoint support, or billing.
+- Use the real installer to register a scripted fake companion in a throwaway Chromium
+  profile.
+- Load the built extension and drive every panel state, including a missing companion,
+  rejected tokens, no models, streaming, Stop, failures, a crash, Clear, closing the panel,
+  permissions and layout.
+- Run the real protocol code in the fake companion, which never loads the SDK.
+- Block and record every HTTP request the browser makes, and assert that the install,
+  connect-and-send and permission flows make none.
 
-## Integration evidence
+No real PAT or Copilot allowance is used, so the tests do not establish live compatibility
+or billing. CI runs `npm run check` on Ubuntu, where Chromium also reads the profile's
+`NativeMessagingHosts` directory.
 
-- [Official CLI PAT setup](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/authenticate-copilot-cli)
-  and [SDK authentication](https://github.com/github/copilot-sdk/blob/main/docs/auth/authenticate.md)
-  document credential support in the runtime, not direct browser inference.
-- [Pi's direct Copilot client](https://github.com/earendil-works/pi/blob/d201760ffee16564aa8d9a759e0c85b70db33674/packages/ai/src/auth/oauth/github-copilot.ts)
-  and [copilot-api's token exchange](https://github.com/ericc-ch/copilot-api/blob/0ea08febdd7e3e055b03dd298bf57e669500b5c1/src/services/github/get-copilot-token.ts)
-  demonstrate HTTP flows using GitHub credentials. They are protocol evidence, not a
-  promise of PAT compatibility, a public contract, or code dependencies of this project.
-- [Chrome cross-origin requests](https://developer.chrome.com/docs/extensions/develop/concepts/network-requests)
-  explains trusted-context requests with host permissions.
+The code is organized as:
 
-If legitimate direct access cannot be established, the supported-route alternative is
-the official Copilot SDK with a local native companion, or a hosted SDK backend. Neither
-is silently substituted by this experiment.
+- `src/sidepanel/`: the panel UI and its native messaging bridge.
+- `src/companion/`: the companion's entry point, protocol state machine, SDK gateway, frame
+  codec and installer.
+- `src/protocol/`: the messages and extension identity shared by both sides.
+
+## Evidence
+
+- [SDK authentication](https://github.com/github/copilot-sdk/blob/main/docs/auth/authenticate.md):
+  `github_pat_` fine-grained PATs are supported, and classic `ghp_` tokens are not.
+- [Copilot CLI authentication](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/authenticate-copilot-cli):
+  the PAT must be owned by your personal account and have the Copilot Requests permission.
+- [SDK multi-tenancy](https://github.com/github/copilot-sdk/blob/main/docs/setup/multi-tenancy.md):
+  `mode: "empty"` and the default integration ID.
+- [SDK streaming events](https://github.com/github/copilot-sdk/blob/main/docs/features/streaming-events.md)
+  and [usage and billing](https://github.com/github/copilot-sdk/blob/main/docs/features/usage-and-billing.md):
+  `assistant.message_delta`, `session.idle` and the `assistant.usage` multiplier.
+- [Chrome native messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging)
+  and [the manifest `key`](https://developer.chrome.com/docs/extensions/reference/manifest/key).
