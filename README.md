@@ -97,6 +97,13 @@ credential clearing, and responsive layout. Unit tests cover credential routing,
 endpoint validation, refresh/expiry, errors, cancellation, and incomplete/oversized
 streams. Tests do not establish live token compatibility, endpoint support, or billing.
 
+CI runs the same checks on pull requests, pushes to `main`, and on demand from the
+Actions tab. Unit tests and the type-checked build run in parallel; the E2E job then
+tests the exact `chrome-extension` artifact uploaded by the build, which you can also
+download from the run and load unpacked. Playwright output, including layout
+screenshots, is uploaded as `playwright-test-results` even when tests fail. CI uses no
+secrets and has read-only repository access.
+
 ## Integration evidence
 
 - [Official CLI PAT setup](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/authenticate-copilot-cli)
