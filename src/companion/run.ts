@@ -36,7 +36,7 @@ export function runCompanion({ stdin, stdout, stderr, args, createGateway, sdkVe
     if (!exiting && stdout.writable) stdout.write(encodeFrame(message));
   }
 
-  const service = createCompanionService({ createGateway, emit });
+  const service = createCompanionService({ createGateway, emit, onRuntimeStuck: () => exit(FAILED_EXIT) });
   const decoder = createFrameDecoder((frame) => {
     if (exiting) return;
     const message = parsePanelMessage(frame);

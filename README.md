@@ -142,9 +142,16 @@ The companion:
   65,536 characters of output, 60 seconds per connect or send, and one operation at a time.
   The output and time limits end a request with an explicit error and keep the partial
   output.
+- Counts an operation as running until it has cleaned up, and reports its error only then.
+  A failed or timed-out connection waits for its runtime to stop. A request ended by a limit
+  waits for its SDK session to end. If that session has not ended 5 seconds after the abort,
+  the companion reports the limit, stops the runtime and exits, and the panel offers
+  **Check again**.
 - Handles **Stop** by aborting the SDK session and keeping the partial output, marked
   incomplete. It may not prevent server-side work or charges.
-- On exit, stops the runtime and deletes its temporary directory.
+- Stops a runtime by asking it to shut down, killing it if it has not stopped within
+  5 seconds, and then deleting its temporary directory. It does this after a failed
+  connection and on exit.
 
 Accepted risks:
 

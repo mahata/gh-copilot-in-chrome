@@ -1,11 +1,13 @@
 import { endianness } from "node:os";
 import { PassThrough } from "node:stream";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFrameDecoder, encodeFrame, MAX_INBOUND_FRAME_BYTES } from "../../src/companion/framing.ts";
 import type { CopilotGateway, Turn, TurnRequest } from "../../src/companion/gateway.ts";
 import { runCompanion } from "../../src/companion/run.ts";
+import { ABORT_TIMEOUT_MS } from "../../src/companion/service.ts";
 import { EXTENSION_ORIGIN } from "../../src/protocol/identity.ts";
-import { FIXED_TEST_PROMPT } from "../../src/protocol/messages.ts";
+import { FIXED_TEST_PROMPT, OPERATION_TIMEOUT_MS } from "../../src/protocol/messages.ts";
+import type { TurnOutcome } from "../../src/protocol/messages.ts";
 
 const token = `github_pat_${"R".repeat(82)}`;
 
@@ -71,6 +73,10 @@ function startCompanion({ args = [EXTENSION_ORIGIN], gateway = fakeGateway() }: 
 
 const hello = { type: "hello", protocolVersion: 1, sdkVersion: "1.0.14" };
 const connected = { type: "connected", login: "octocat", models: [{ id: "gpt-5-mini", name: "GPT-5 mini", multiplier: 0 }] };
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("runCompanion", () => {
   it.each([
@@ -185,6 +191,24 @@ describe("runCompanion", () => {
 
     await expect(started.companion.done).resolves.toBe(1);
     expect(gateway.close).toHaveBeenCalledOnce();
+  });
+
+  it("closes the runtime and exits with a failure after giving up on a turn the runtime never ends", async () => {
+    vi.useFakeTimers();
+    const gateway = fakeGateway({
+      startTurn: vi.fn((): Turn => ({ outcome: new Promise<TurnOutcome>(() => {}), abort: vi.fn(async () => {}) })),
+    });
+    const { frames, stdin, companion } = startCompanion({ gateway });
+    stdin.write(encodeFrame({ type: "connect", token }));
+    await vi.waitFor(() => expect(frames).toEqual([hello, connected]));
+    stdin.write(encodeFrame({ type: "send", model: "gpt-5-mini" }));
+    await vi.waitFor(() => expect(gateway.startTurn).toHaveBeenCalled());
+
+    await vi.advanceTimersByTimeAsync(OPERATION_TIMEOUT_MS + ABORT_TIMEOUT_MS);
+    await expect(companion.done).resolves.toBe(1);
+    expect(frames).toEqual([hello, connected, { type: "error", stage: "send", code: "timeout" }]);
+    expect(gateway.close).toHaveBeenCalledOnce();
+    expect(stdin.destroyed).toBe(true);
   });
 
   it("never writes the token to its output streams", async () => {

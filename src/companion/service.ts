@@ -3,37 +3,38 @@ import type { ConnectFailureCode, CopilotGateway, Turn, TurnEvent, TurnFailureCo
 import { FIXED_TEST_PROMPT, MAX_OUTPUT_LENGTH, OPERATION_TIMEOUT_MS } from "../protocol/messages.ts";
 import type { CompanionMessage, ErrorCode, PanelMessage } from "../protocol/messages.ts";
 
+export const ABORT_TIMEOUT_MS = 5_000;
+
 type CompanionServiceOptions = {
   createGateway: () => CopilotGateway;
   emit: (message: CompanionMessage) => void;
+  onRuntimeStuck: () => void;
 };
 
 type Connecting = { phase: "connecting"; gateway: CopilotGateway };
 type Connected = { phase: "connected"; gateway: CopilotGateway; modelIds: ReadonlySet<string> };
-type Sending = {
-  phase: "sending";
-  gateway: CopilotGateway;
-  modelIds: ReadonlySet<string>;
-  abortTurn: () => void;
-  outputLength: number;
-};
-type ServiceState = { phase: "ready" } | Connecting | Connected | Sending | { phase: "closed" };
+type Sending = { phase: "sending"; gateway: CopilotGateway; modelIds: ReadonlySet<string>; turn: Turn; outputLength: number };
+type Stopping = { phase: "stopping"; gateway: CopilotGateway; modelIds: ReadonlySet<string> };
+type Closing = { phase: "closing"; cleanup: Promise<void> };
+type Closed = { phase: "closed"; cleanup: Promise<void> };
+type ServiceState = { phase: "ready" } | Connecting | Connected | Sending | Stopping | Closing | Closed;
+type AbandonReason = "output_limit" | "timeout";
 
-export function createCompanionService({ createGateway, emit }: CompanionServiceOptions) {
+export function createCompanionService({ createGateway, emit, onRuntimeStuck }: CompanionServiceOptions) {
   let state: ServiceState = { phase: "ready" };
-  let operationTimer: ReturnType<typeof setTimeout> | undefined;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
 
-  function startOperationTimer(onTimeout: () => void) {
-    operationTimer = setTimeout(onTimeout, OPERATION_TIMEOUT_MS);
+  function startDeadline(timeoutMs: number, onExpired: () => void) {
+    deadline = setTimeout(onExpired, timeoutMs);
   }
 
-  function clearOperationTimer() {
-    clearTimeout(operationTimer);
-    operationTimer = undefined;
+  function clearDeadline() {
+    clearTimeout(deadline);
+    deadline = undefined;
   }
 
   function connect(token: string) {
-    if (state.phase === "connecting") return emit(connectError("busy"));
+    if (state.phase === "connecting" || state.phase === "closing") return emit(connectError("busy"));
     if (state.phase !== "ready") return emit(connectError("already_connected"));
 
     let gateway: CopilotGateway;
@@ -44,12 +45,12 @@ export function createCompanionService({ createGateway, emit }: CompanionService
     }
     const connecting: Connecting = { phase: "connecting", gateway };
     state = connecting;
-    startOperationTimer(() => failConnect(connecting, "timeout"));
+    startDeadline(OPERATION_TIMEOUT_MS, () => failConnect(connecting, "timeout"));
 
     gateway.connect(token).then(
       ({ login, models }) => {
         if (state !== connecting) return;
-        clearOperationTimer();
+        clearDeadline();
         state = { phase: "connected", gateway, modelIds: new Set(models.map((model) => model.id)) };
         emit(login === undefined ? { type: "connected", models } : { type: "connected", login, models });
       },
@@ -59,10 +60,14 @@ export function createCompanionService({ createGateway, emit }: CompanionService
 
   function failConnect(connecting: Connecting, code: ErrorCode<"connect">) {
     if (state !== connecting) return;
-    clearOperationTimer();
-    state = { phase: "ready" };
-    void closeQuietly(connecting.gateway);
-    emit(connectError(code));
+    clearDeadline();
+    const closing: Closing = { phase: "closing", cleanup: closeQuietly(connecting.gateway) };
+    state = closing;
+    void closing.cleanup.then(() => {
+      if (state !== closing) return;
+      state = { phase: "ready" };
+      emit(connectError(code));
+    });
   }
 
   function send(model: string) {
@@ -71,22 +76,21 @@ export function createCompanionService({ createGateway, emit }: CompanionService
     if (!state.modelIds.has(model)) return emit(sendError("unknown_model"));
 
     const { gateway, modelIds } = state;
-    const sending: Sending = { phase: "sending", gateway, modelIds, abortTurn: () => {}, outputLength: 0 };
-    state = sending;
-    let turn: Turn;
+    let sending: Sending;
     try {
-      turn = gateway.startTurn({
+      const turn = gateway.startTurn({
         model,
         prompt: FIXED_TEST_PROMPT,
         onEvent: (event) => forwardTurnEvent(sending, event),
       });
+      sending = { phase: "sending", gateway, modelIds, turn, outputLength: 0 };
     } catch (error) {
-      return endTurn(sending, sendError(turnFailureCode(error)));
+      return emit(sendError(turnFailureCode(error)));
     }
-    sending.abortTurn = () => void turn.abort().catch(() => {});
-    startOperationTimer(() => abandonTurn(sending, "timeout"));
+    state = sending;
+    startDeadline(OPERATION_TIMEOUT_MS, () => abandonTurn(sending, "timeout"));
 
-    turn.outcome.then(
+    sending.turn.outcome.then(
       (outcome) => endTurn(sending, { type: "done", outcome }),
       (error: unknown) => endTurn(sending, sendError(turnFailureCode(error))),
     );
@@ -110,21 +114,47 @@ export function createCompanionService({ createGateway, emit }: CompanionService
     abandonTurn(sending, "output_limit");
   }
 
-  function abandonTurn(sending: Sending, code: "output_limit" | "timeout") {
+  function abandonTurn(sending: Sending, reason: AbandonReason) {
     if (state !== sending) return;
-    sending.abortTurn();
-    endTurn(sending, sendError(code));
+    clearDeadline();
+    const stopping: Stopping = { phase: "stopping", gateway: sending.gateway, modelIds: sending.modelIds };
+    state = stopping;
+    abortQuietly(sending.turn);
+    startDeadline(ABORT_TIMEOUT_MS, () => giveUpOnRuntime(stopping, reason));
+
+    const reportOnceTurnEnds = () => {
+      if (state !== stopping) return;
+      clearDeadline();
+      state = { phase: "connected", gateway: stopping.gateway, modelIds: stopping.modelIds };
+      emit(sendError(reason));
+    };
+    sending.turn.outcome.then(reportOnceTurnEnds, reportOnceTurnEnds);
+  }
+
+  function giveUpOnRuntime(stopping: Stopping, reason: AbandonReason) {
+    if (state !== stopping) return;
+    emit(sendError(reason));
+    void shutdown();
+    onRuntimeStuck();
   }
 
   function endTurn(sending: Sending, message: CompanionMessage) {
     if (state !== sending) return;
-    clearOperationTimer();
+    clearDeadline();
     state = { phase: "connected", gateway: sending.gateway, modelIds: sending.modelIds };
     emit(message);
   }
 
   function stop() {
-    if (state.phase === "sending") state.abortTurn();
+    if (state.phase === "sending") abortQuietly(state.turn);
+  }
+
+  function shutdown() {
+    if (state.phase !== "closed") {
+      clearDeadline();
+      state = { phase: "closed", cleanup: cleanupFor(state) };
+    }
+    return state.cleanup;
   }
 
   return {
@@ -134,15 +164,18 @@ export function createCompanionService({ createGateway, emit }: CompanionService
       else if (message.type === "send") send(message.model);
       else stop();
     },
-
-    async shutdown() {
-      if (state.phase === "closed") return;
-      const gateway = state.phase === "ready" ? undefined : state.gateway;
-      state = { phase: "closed" };
-      clearOperationTimer();
-      if (gateway) await closeQuietly(gateway);
-    },
+    shutdown,
   };
+}
+
+function cleanupFor(state: Exclude<ServiceState, Closed>): Promise<void> {
+  if (state.phase === "ready") return Promise.resolve();
+  if (state.phase === "closing") return state.cleanup;
+  return closeQuietly(state.gateway);
+}
+
+function abortQuietly(turn: Turn) {
+  turn.abort().catch(() => {});
 }
 
 function connectError(code: ErrorCode<"connect">): CompanionMessage {
