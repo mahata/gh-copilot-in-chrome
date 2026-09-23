@@ -508,6 +508,37 @@ describe("stop", () => {
     service.handle({ type: "stop" });
     expect(emitted).toEqual([]);
   });
+
+  it("replaces the reply deadline with the abort deadline, then gives up on a runtime that has not ended the turn", async () => {
+    const { service, gateway, emitted, onRuntimeStuck } = await startConnected();
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
+    service.handle({ type: "stop" });
+    await vi.advanceTimersByTimeAsync(ABORT_TIMEOUT_MS - 1);
+    expect(emitted).toEqual([]);
+    expect(onRuntimeStuck).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(emitted).toEqual([{ type: "done", outcome: "stopped" }]);
+    expect(gateway.gateway.close).toHaveBeenCalledOnce();
+    expect(onRuntimeStuck).toHaveBeenCalledOnce();
+
+    itemAt(gateway.turns, 0).outcome.resolve("stopped");
+    await service.shutdown();
+    expect(emitted).toHaveLength(1);
+    expect(gateway.gateway.close).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the first abort deadline and aborts only once when Stop is repeated", async () => {
+    const { service, gateway, emitted } = await startConnected();
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
+    service.handle({ type: "stop" });
+    await vi.advanceTimersByTimeAsync(ABORT_TIMEOUT_MS - 1);
+    service.handle({ type: "stop" });
+    expect(itemAt(gateway.turns, 0).abort).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(emitted).toEqual([{ type: "done", outcome: "stopped" }]);
+  });
 });
 
 describe("new chat", () => {
@@ -775,7 +806,13 @@ describe("deadlines", () => {
     expect(vi.getTimerCount()).toBe(0);
 
     service.handle({ type: "send", model: "gpt-5-mini", prompt });
-    emitEvent(itemAt(turns, 2), { type: "delta", text: "a".repeat(MAX_OUTPUT_LENGTH + 1) });
+    service.handle({ type: "stop" });
+    itemAt(turns, 2).outcome.resolve("stopped");
+    await settle();
+    expect(vi.getTimerCount()).toBe(0);
+
+    service.handle({ type: "send", model: "gpt-5-mini", prompt });
+    emitEvent(itemAt(turns, 3), { type: "delta", text: "a".repeat(MAX_OUTPUT_LENGTH + 1) });
     await service.shutdown();
     expect(vi.getTimerCount()).toBe(0);
   });

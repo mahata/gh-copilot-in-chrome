@@ -15,7 +15,14 @@ type CompanionServiceOptions = {
 
 type Connecting = { phase: "connecting"; gateway: CopilotGateway };
 type Connected = { phase: "connected"; gateway: CopilotGateway; modelIds: ReadonlySet<string> };
-type Sending = { phase: "sending"; gateway: CopilotGateway; modelIds: ReadonlySet<string>; turn: Turn; outputLength: number };
+type Sending = {
+  phase: "sending";
+  gateway: CopilotGateway;
+  modelIds: ReadonlySet<string>;
+  turn: Turn;
+  outputLength: number;
+  stopRequested: boolean;
+};
 type Stopping = { phase: "stopping"; gateway: CopilotGateway; modelIds: ReadonlySet<string> };
 type Closing = { phase: "closing"; cleanup: Promise<void> };
 type Closed = { phase: "closed"; cleanup: Promise<void> };
@@ -140,7 +147,7 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
         prompt,
         onEvent: (event) => forwardTurnEvent(sending, event),
       });
-      sending = { phase: "sending", gateway, modelIds, turn, outputLength: 0 };
+      sending = { phase: "sending", gateway, modelIds, turn, outputLength: 0, stopRequested: false };
     } catch (error) {
       return emit(sendError(turnFailureCode(error)));
     }
@@ -177,7 +184,7 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
     const stopping: Stopping = { phase: "stopping", gateway: sending.gateway, modelIds: sending.modelIds };
     state = stopping;
     abortQuietly(sending.turn);
-    startDeadline(ABORT_TIMEOUT_MS, () => giveUpOnRuntime(stopping, reason));
+    startDeadline(ABORT_TIMEOUT_MS, () => giveUpOnRuntime(stopping, sendError(reason)));
 
     const reportOnceTurnEnds = () => {
       if (state !== stopping) return;
@@ -188,9 +195,9 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
     sending.turn.outcome.then(reportOnceTurnEnds, reportOnceTurnEnds);
   }
 
-  function giveUpOnRuntime(stopping: Stopping, reason: AbandonReason) {
-    if (state !== stopping) return;
-    emit(sendError(reason));
+  function giveUpOnRuntime(stuck: Sending | Stopping, message: CompanionMessage) {
+    if (state !== stuck) return;
+    emit(message);
     void shutdown();
     onRuntimeStuck();
   }
@@ -203,7 +210,12 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
   }
 
   function stop() {
-    if (state.phase === "sending") abortQuietly(state.turn);
+    if (state.phase !== "sending" || state.stopRequested) return;
+    const sending = state;
+    sending.stopRequested = true;
+    clearDeadline();
+    abortQuietly(sending.turn);
+    startDeadline(ABORT_TIMEOUT_MS, () => giveUpOnRuntime(sending, { type: "done", outcome: "stopped" }));
   }
 
   function startNewChat() {

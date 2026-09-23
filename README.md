@@ -206,7 +206,9 @@ The companion:
   companion reports the limit, stops the runtime and exits, and the panel offers **Check
   again**.
 - Handles **Stop** by aborting the current turn and keeping the partial output, marked
-  incomplete. It may not prevent server-side work or charges.
+  incomplete. It may not prevent server-side work or charges. Stop replaces the reply's
+  5-minute limit with 5 seconds: if the turn has not ended by then, the companion reports
+  it stopped, stops the runtime and exits, and the panel offers **Check again**.
 - Stops a runtime by asking it to shut down, killing it if it has not stopped within
   5 seconds, and then deleting its temporary directory. It does this after a failed
   connection and on exit.
