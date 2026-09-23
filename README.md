@@ -10,7 +10,7 @@ tests does not establish any of them.
 
 ## Build and load
 
-Requires Node.js 22.12+ (Node.js 24 LTS recommended), npm, and Chrome 120+.
+Requires Node.js 24, npm, and Chrome 120+.
 Node.js is a build tool here, not an end-user companion process.
 
 ```sh
