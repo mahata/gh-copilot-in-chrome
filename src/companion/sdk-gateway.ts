@@ -4,11 +4,11 @@ import { join } from "node:path";
 import type { CopilotClient, CopilotSession, ModelInfo, SessionEvent } from "@github/copilot-sdk";
 import { GatewayFailure } from "./gateway.ts";
 import type { ConnectedAccount, CopilotGateway, GatewayFailureCode, TurnEvent, TurnFailureCode, TurnRequest } from "./gateway.ts";
+import { SYSTEM_PATH } from "./system-path.ts";
 import { MAX_MODELS, isBoundedField, isNonNegativeNumber } from "../protocol/messages.ts";
 import type { ModelSummary, TurnOutcome } from "../protocol/messages.ts";
 
 const APPLICATION_NAME = "gh-copilot-in-chrome";
-const SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
 export const GRACEFUL_STOP_TIMEOUT_MS = 5_000;
 
 const TURN_FAILURE_BY_ERROR_TYPE = new Map<string, TurnFailureCode>([
