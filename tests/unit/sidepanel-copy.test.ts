@@ -9,13 +9,13 @@ import {
 } from "../../src/sidepanel/copy.ts";
 
 describe("side panel copy", () => {
-  it("labels models with their premium request multiplier", () => {
-    expect(modelOptionLabel({ id: "gpt-5", name: "GPT-5", multiplier: 0.33 })).toBe("GPT-5 (0.33× premium requests)");
-    expect(modelOptionLabel({ id: "gpt-4.1", name: "GPT-4.1", multiplier: 0 })).toBe("GPT-4.1 (0× premium requests)");
+  it("labels models with the billing multiplier the SDK reports", () => {
+    expect(modelOptionLabel({ id: "gpt-5", name: "GPT-5", multiplier: 0.33 })).toBe("GPT-5 (billing multiplier 0.33×)");
+    expect(modelOptionLabel({ id: "gpt-4.1", name: "GPT-4.1", multiplier: 0 })).toBe("GPT-4.1 (billing multiplier 0×)");
   });
 
   it("says when a model's multiplier was not reported", () => {
-    expect(modelOptionLabel({ id: "mystery", name: "Mystery" })).toBe("Mystery (premium request multiplier not reported)");
+    expect(modelOptionLabel({ id: "mystery", name: "Mystery" })).toBe("Mystery (billing multiplier not reported)");
   });
 
   it("names the SDK version once the companion is ready", () => {

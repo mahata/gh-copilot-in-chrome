@@ -124,9 +124,9 @@ test("connects through the companion and renders the approved reply as inert tex
   await expect(page.getByLabel("I authorize the local companion")).not.toBeChecked();
   await expect(page.getByLabel("Model", { exact: true }).locator("option")).toHaveText([
     "Choose a model",
-    "Fake reply (0× premium requests)",
-    "Fake slow reply (1× premium requests)",
-    "Fake quota failure (0.33× premium requests)",
+    "Fake reply (billing multiplier 0×)",
+    "Fake slow reply (billing multiplier 1×)",
+    "Fake quota failure (billing multiplier 0.33×)",
   ]);
   await expect(page.getByText("Reply with exactly: Connection confirmed.", { exact: true })).toBeVisible();
 

@@ -72,12 +72,13 @@ export function connectedStatus(login: string | undefined, modelCount: number) {
 }
 
 export function modelOptionLabel({ name, multiplier }: ModelSummary) {
-  return multiplier === undefined
-    ? `${name} (premium request multiplier not reported)`
-    : `${name} (${multiplier}× premium requests)`;
+  return `${name} (${billingMultiplier(multiplier)})`;
 }
 
 export function usageReport(model: string, cost: number | undefined) {
-  const multiplier = cost === undefined ? "not reported" : `${cost}×`;
-  return `SDK usage report: ${model}, billing multiplier ${multiplier}.`;
+  return `SDK usage report: ${model}, ${billingMultiplier(cost)}.`;
+}
+
+function billingMultiplier(multiplier: number | undefined) {
+  return `billing multiplier ${multiplier === undefined ? "not reported" : `${multiplier}×`}`;
 }
