@@ -1,4 +1,4 @@
-name: Offline harness checks
+name: Offline checks
 
 on:
   push:
