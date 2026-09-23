@@ -11,7 +11,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "npm run build && playwright test",
-    "check": "npm test && npm run test:e2e"
+    "check": "npm test && npm run test:e2e",
+    "companion:install": "node src/companion/install-cli.ts",
+    "companion:uninstall": "node src/companion/install-cli.ts --uninstall"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.0",
