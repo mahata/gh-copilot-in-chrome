@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayFailure } from "../../src/companion/gateway.ts";
 import type { ConnectedAccount, CopilotGateway, TurnEvent, TurnRequest } from "../../src/companion/gateway.ts";
-import { OPERATION_TIMEOUT_MS, createCompanionService } from "../../src/companion/service.ts";
-import { FIXED_TEST_PROMPT, MAX_OUTPUT_LENGTH } from "../../src/protocol/messages.ts";
+import { createCompanionService } from "../../src/companion/service.ts";
+import { FIXED_TEST_PROMPT, MAX_OUTPUT_LENGTH, OPERATION_TIMEOUT_MS } from "../../src/protocol/messages.ts";
 import type { CompanionMessage, TurnOutcome } from "../../src/protocol/messages.ts";
 
 const token = `github_pat_${"Z".repeat(82)}`;

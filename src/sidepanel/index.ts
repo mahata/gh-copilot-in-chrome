@@ -1,8 +1,23 @@
-import { CopilotProbe, PROBE_PROMPT } from "../copilot/client";
-import type { Model } from "../copilot/client";
-import { createDemoProbe, DEMO_PAT } from "../copilot/demo";
-import { safeError } from "../copilot/errors";
+import { openCompanionBridge } from "./companion.ts";
+import type { BridgeEvent, CompanionBridge, SessionMessage } from "./companion.ts";
+import {
+  BRIDGE_FAILURE_TEXT,
+  CONNECT_ERROR_TEXT,
+  connectedStatus,
+  MODEL_PLACEHOLDER_TEXT,
+  modelOptionLabel,
+  NO_RESPONSE_TEXT,
+  NOT_FINE_GRAINED_PAT,
+  readyStatus,
+  SEND_ERROR_TEXT,
+  STATUS_TEXT,
+  usageReport,
+} from "./copy.ts";
+import { FIXED_TEST_PROMPT, isFineGrainedPersonalAccessToken } from "../protocol/messages.ts";
+import type { ModelSummary } from "../protocol/messages.ts";
 import "./style.css";
+
+type PanelPhase = "detecting" | "unavailable" | "ready" | "connecting" | "connected" | "sending";
 
 function element<T extends HTMLElement>(id: string, type: new () => T): T {
   const found = document.getElementById(id);
@@ -10,141 +25,205 @@ function element<T extends HTMLElement>(id: string, type: new () => T): T {
   return found;
 }
 
-const pat = element("pat", HTMLInputElement);
-const authConsent = element("auth-consent", HTMLInputElement);
-const inferenceConsent = element("inference-consent", HTMLInputElement);
-const model = element("model", HTMLSelectElement);
-const connectButton = element("connect", HTMLButtonElement);
-const sendButton = element("send", HTMLButtonElement);
-const demoButton = element("demo", HTMLButtonElement);
-const stopButton = element("stop", HTMLButtonElement);
-const output = element("output", HTMLPreElement);
+const statusBar = element("status-bar", HTMLDivElement);
 const status = element("status", HTMLParagraphElement);
 const errorNotice = element("error", HTMLParagraphElement);
-const client = new CopilotProbe();
-let models: Model[] = [];
-let busy = false;
-let generation = 0;
-let controller: AbortController | undefined;
+const checkAgainButton = element("check-again", HTMLButtonElement);
+const authForm = element("auth-form", HTMLFormElement);
+const pat = element("pat", HTMLInputElement);
+const authConsent = element("auth-consent", HTMLInputElement);
+const connectButton = element("connect", HTMLButtonElement);
+const model = element("model", HTMLSelectElement);
+const inferenceConsent = element("inference-consent", HTMLInputElement);
+const sendButton = element("send", HTMLButtonElement);
+const stopButton = element("stop", HTMLButtonElement);
+const output = element("output", HTMLPreElement);
+const usage = element("usage", HTMLParagraphElement);
+const clearButton = element("clear", HTMLButtonElement);
 
-element("prompt", HTMLPreElement).textContent = PROBE_PROMPT;
+let phase: PanelPhase = "detecting";
+let bridge: CompanionBridge | undefined;
+let sdkVersion = "";
+let stopRequested = false;
 
-function updateControls() {
-  pat.disabled = busy;
-  authConsent.disabled = busy;
-  connectButton.disabled = busy || !authConsent.checked || !pat.value;
-  model.disabled = busy || models.length === 0;
-  inferenceConsent.disabled = busy || !model.value;
-  sendButton.disabled = busy || !model.value || !inferenceConsent.checked;
-  demoButton.disabled = busy;
-  stopButton.disabled = !busy;
-}
-
-function setModels(next: Model[]) {
-  models = next;
-  const placeholder = new Option(models.length ? "Choose a model" : "Check your PAT first", "");
-  model.replaceChildren(placeholder, ...models.map((value) => new Option(value.name, value.id)));
-  inferenceConsent.checked = false;
+function startCompanion() {
+  phase = "detecting";
+  status.textContent = STATUS_TEXT.detecting;
+  const openedBridge = openCompanionBridge({
+    connectNative: (hostName) => chrome.runtime.connectNative(hostName),
+    readLastError: () => chrome.runtime.lastError?.message,
+    onEvent: (event) => {
+      if (bridge === openedBridge) handleBridgeEvent(event);
+    },
+  });
+  bridge = openedBridge;
   updateControls();
 }
 
-function clear() {
-  generation++;
-  controller?.abort();
-  client.clear();
-  controller = undefined;
-  busy = false;
+function resetPanel() {
+  bridge?.close();
+  bridge = undefined;
   pat.value = "";
   authConsent.checked = false;
-  inferenceConsent.checked = false;
-  setModels([]);
-  output.textContent = "No response yet.";
-  errorNotice.textContent = "";
-  errorNotice.hidden = true;
-  status.textContent = "Cleared. Credentials and output were removed from this panel.";
+  forgetConnection();
+  output.textContent = NO_RESPONSE_TEXT;
+  hideUsage();
+  hideError();
+}
+
+function forgetConnection() {
+  stopRequested = false;
+  showModels([], MODEL_PLACEHOLDER_TEXT.disconnected);
+}
+
+function handleBridgeEvent(event: BridgeEvent) {
+  switch (event.type) {
+    case "ready":
+      sdkVersion = event.sdkVersion;
+      phase = "ready";
+      status.textContent = readyStatus(sdkVersion);
+      break;
+    case "message":
+      handleSessionMessage(event.message);
+      break;
+    case "closed":
+      bridge = undefined;
+      phase = "unavailable";
+      forgetConnection();
+      status.textContent = STATUS_TEXT.unavailable;
+      showError(BRIDGE_FAILURE_TEXT[event.failure], event.failure);
+      break;
+  }
   updateControls();
 }
 
-async function run(label: string, task: (signal: AbortSignal) => Promise<string>) {
-  if (busy) return;
-  const current = ++generation;
-  const operation = new AbortController();
-  controller = operation;
-  busy = true;
-  status.textContent = label;
-  errorNotice.hidden = true;
-  errorNotice.textContent = "";
-  output.textContent = "";
-  updateControls();
-  status.scrollIntoView({ block: "nearest" });
-  try {
-    const message = await task(operation.signal);
-    operation.signal.throwIfAborted();
-    if (current === generation) status.textContent = message;
-  } catch (error) {
-    if (current === generation) {
-      const failure = safeError(error, operation.signal);
-      status.textContent = failure.code === "cancelled" ? "Stopped. Output may be incomplete." : "Experiment stopped.";
-      errorNotice.textContent = `${failure.message} (${failure.code})`;
-      errorNotice.hidden = false;
+function handleSessionMessage(message: SessionMessage) {
+  switch (message.type) {
+    case "connected": {
+      if (phase !== "connecting") return;
+      phase = "connected";
+      const placeholder = message.models.length > 0 ? MODEL_PLACEHOLDER_TEXT.choose : MODEL_PLACEHOLDER_TEXT.none;
+      showModels(message.models, placeholder);
+      status.textContent = connectedStatus(message.login, message.models.length);
+      return;
     }
-  } finally {
-    if (current === generation) {
-      busy = false;
-      controller = undefined;
-      updateControls();
-    }
+    case "delta":
+      if (phase === "sending") output.append(message.text);
+      return;
+    case "usage":
+      if (phase !== "sending") return;
+      usage.textContent = usageReport(message.model, message.cost);
+      usage.hidden = false;
+      return;
+    case "done":
+      if (phase !== "sending") return;
+      phase = "connected";
+      status.textContent = message.outcome === "stopped" ? STATUS_TEXT.stopped : STATUS_TEXT.complete;
+      return;
+    case "error":
+      if (message.stage === "connect") {
+        if (phase === "connecting") {
+          phase = "ready";
+          status.textContent = readyStatus(sdkVersion);
+        }
+        showError(CONNECT_ERROR_TEXT[message.code], message.code);
+      } else {
+        if (phase === "sending") {
+          phase = "connected";
+          status.textContent = STATUS_TEXT.sendFailed;
+        }
+        showError(SEND_ERROR_TEXT[message.code], message.code);
+      }
+      return;
   }
 }
 
-element("auth-form", HTMLFormElement).addEventListener("submit", (event) => {
+function showModels(models: readonly ModelSummary[], placeholder: string) {
+  model.replaceChildren(
+    new Option(placeholder, ""),
+    ...models.map((summary) => new Option(modelOptionLabel(summary), summary.id)),
+  );
+  inferenceConsent.checked = false;
+}
+
+function showError(text: string, code: string) {
+  errorNotice.textContent = `${text} (${code})`;
+  errorNotice.hidden = false;
+}
+
+function hideError() {
+  errorNotice.hidden = true;
+  errorNotice.textContent = "";
+}
+
+function hideUsage() {
+  usage.hidden = true;
+  usage.textContent = "";
+}
+
+function updateControls() {
+  const ready = phase === "ready";
+  const connected = phase === "connected";
+  pat.disabled = !ready;
+  authConsent.disabled = !ready;
+  connectButton.disabled = !ready || !authConsent.checked || pat.value.trim() === "";
+  model.disabled = !connected || model.options.length <= 1;
+  inferenceConsent.disabled = !connected || model.value === "";
+  sendButton.disabled = !connected || model.value === "" || !inferenceConsent.checked;
+  stopButton.disabled = phase !== "sending" || stopRequested;
+  checkAgainButton.hidden = phase !== "unavailable";
+}
+
+authForm.addEventListener("submit", (event) => {
   event.preventDefault();
   if (connectButton.disabled) return;
-  const token = pat.value;
+  const token = pat.value.trim();
   pat.value = "";
   authConsent.checked = false;
-  setModels([]);
-  void run("Live: exchanging the PAT and discovering models...", async (signal) => {
-    const available = await client.connect(token, signal);
-    signal.throwIfAborted();
-    setModels(available);
-    return "Discovery succeeded. Inference and billing are still unverified.";
-  });
+  hideError();
+  if (!isFineGrainedPersonalAccessToken(token)) {
+    showError(NOT_FINE_GRAINED_PAT.text, NOT_FINE_GRAINED_PAT.code);
+  } else if (bridge?.send({ type: "connect", token })) {
+    phase = "connecting";
+    status.textContent = STATUS_TEXT.connecting;
+  }
+  updateControls();
 });
 
 sendButton.addEventListener("click", () => {
   if (sendButton.disabled) return;
   const modelId = model.value;
   inferenceConsent.checked = false;
-  void run("Live: waiting for the test response...", async (signal) => {
-    for await (const text of client.stream(modelId, signal)) {
-      signal.throwIfAborted();
-      output.textContent += text;
-    }
-    return "Live response complete. Verify account usage separately; public API support remains unverified.";
-  });
+  hideError();
+  if (bridge?.send({ type: "send", model: modelId })) {
+    phase = "sending";
+    stopRequested = false;
+    output.textContent = "";
+    hideUsage();
+    status.textContent = STATUS_TEXT.sending;
+  }
+  updateControls();
 });
 
-demoButton.addEventListener("click", () => {
-  if (busy) return;
-  clear();
-  void run("Offline: streaming synthetic data...", async (signal) => {
-    const demo = createDemoProbe();
-    try {
-      await demo.connect(DEMO_PAT, signal);
-      for await (const text of demo.stream("synthetic-demo", signal)) {
-        signal.throwIfAborted();
-        output.textContent += text;
-      }
-      return "Offline demo complete. No GitHub request was made; live compatibility is unverified.";
-    } finally {
-      demo.clear();
-    }
-  });
+stopButton.addEventListener("click", () => {
+  if (stopButton.disabled) return;
+  if (bridge?.send({ type: "stop" })) {
+    stopRequested = true;
+    status.textContent = STATUS_TEXT.stopping;
+  }
+  updateControls();
 });
 
-stopButton.addEventListener("click", () => controller?.abort());
-element("clear", HTMLButtonElement).addEventListener("click", clear);
+checkAgainButton.addEventListener("click", () => {
+  hideError();
+  startCompanion();
+});
+
+clearButton.addEventListener("click", () => {
+  resetPanel();
+  startCompanion();
+});
+
 pat.addEventListener("input", updateControls);
 authConsent.addEventListener("change", updateControls);
 inferenceConsent.addEventListener("change", updateControls);
@@ -152,5 +231,11 @@ model.addEventListener("change", () => {
   inferenceConsent.checked = false;
   updateControls();
 });
-window.addEventListener("pagehide", clear);
-updateControls();
+window.addEventListener("pagehide", resetPanel);
+new ResizeObserver(() => {
+  document.documentElement.style.setProperty("--status-bar-height", `${statusBar.offsetHeight}px`);
+}).observe(statusBar);
+
+element("prompt", HTMLPreElement).textContent = FIXED_TEST_PROMPT;
+resetPanel();
+startCompanion();

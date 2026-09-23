@@ -6,6 +6,7 @@ export const MAX_TOKEN_LENGTH = 255;
 export const MAX_FIELD_LENGTH = 200;
 export const MAX_MODELS = 200;
 export const MAX_OUTPUT_LENGTH = 65_536;
+export const OPERATION_TIMEOUT_MS = 60_000;
 
 export const ERROR_CODES_BY_STAGE = {
   connect: ["busy", "already_connected", "sdk_start_failed", "auth_failed", "models_unavailable", "timeout"],

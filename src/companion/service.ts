@@ -1,9 +1,7 @@
 import { CONNECT_FAILURE_CODES, GatewayFailure, TURN_FAILURE_CODES } from "./gateway.ts";
 import type { ConnectFailureCode, CopilotGateway, Turn, TurnEvent, TurnFailureCode } from "./gateway.ts";
-import { FIXED_TEST_PROMPT, MAX_OUTPUT_LENGTH } from "../protocol/messages.ts";
+import { FIXED_TEST_PROMPT, MAX_OUTPUT_LENGTH, OPERATION_TIMEOUT_MS } from "../protocol/messages.ts";
 import type { CompanionMessage, ErrorCode, PanelMessage } from "../protocol/messages.ts";
-
-export const OPERATION_TIMEOUT_MS = 60_000;
 
 type CompanionServiceOptions = {
   createGateway: () => CopilotGateway;
