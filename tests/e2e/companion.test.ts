@@ -1,6 +1,6 @@
 import { chromium, expect, test } from "@playwright/test";
 import type { BrowserContext, Page, Worker } from "@playwright/test";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { runInstaller } from "../../src/companion/install.ts";
@@ -12,6 +12,7 @@ const approvedToken = `github_pat_${"A".repeat(82)}`;
 const deniedToken = `github_pat_DENIED${"B".repeat(76)}`;
 const crashingToken = `github_pat_CRASH${"C".repeat(77)}`;
 const tokenWithoutModels = `github_pat_NOMODELS${"D".repeat(74)}`;
+const unsavableToken = `github_pat_NOSAVE${"F".repeat(76)}`;
 
 type OpenPanel = {
   context: BrowserContext;
@@ -21,14 +22,21 @@ type OpenPanel = {
   dialogs: string[];
   runningCompanions: () => string[];
   installCompanion: () => Promise<void>;
+  openAnotherPanel: () => Promise<Page>;
+  savedToken: () => string | undefined;
+  removeSavedTokenOutsidePanel: () => void;
 };
+
+type PanelSetup = { withCompanion?: boolean; savedToken?: string };
 
 let cleanUp: (() => Promise<void>) | undefined;
 
-async function openPanel({ withCompanion = true } = {}): Promise<OpenPanel> {
+async function openPanel({ withCompanion = true, savedToken }: PanelSetup = {}): Promise<OpenPanel> {
   const home = mkdtempSync(join(tmpdir(), "panel-e2e-home-"));
   const companionStateDirectory = join(home, "running-companions");
   mkdirSync(companionStateDirectory);
+  const keychainPath = join(home, "fake-keychain");
+  if (savedToken !== undefined) writeFileSync(keychainPath, savedToken);
   const installCompanion = async () => {
     await runInstaller({
       args: [],
@@ -46,7 +54,7 @@ async function openPanel({ withCompanion = true } = {}): Promise<OpenPanel> {
     channel: "chromium",
     headless: true,
     args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`],
-    env: { ...process.env, FAKE_COMPANION_STATE_DIR: companionStateDirectory },
+    env: { ...process.env, FAKE_COMPANION_STATE_DIR: companionStateDirectory, FAKE_KEYCHAIN_PATH: keychainPath },
   });
   cleanUp = async () => {
     await context.close();
@@ -59,13 +67,17 @@ async function openPanel({ withCompanion = true } = {}): Promise<OpenPanel> {
     await route.abort();
   });
   const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
-  const page = await context.newPage();
   const dialogs: string[] = [];
-  page.on("dialog", (dialog) => {
-    dialogs.push(dialog.message());
-    void dialog.dismiss();
-  });
-  await page.goto(`chrome-extension://${EXTENSION_ID}/sidepanel.html`);
+  const openAnotherPanel = async () => {
+    const panelPage = await context.newPage();
+    panelPage.on("dialog", (dialog) => {
+      dialogs.push(dialog.message());
+      void dialog.dismiss();
+    });
+    await panelPage.goto(`chrome-extension://${EXTENSION_ID}/sidepanel.html`);
+    return panelPage;
+  };
+  const page = await openAnotherPanel();
   return {
     context,
     page,
@@ -74,14 +86,17 @@ async function openPanel({ withCompanion = true } = {}): Promise<OpenPanel> {
     dialogs,
     runningCompanions: () => readdirSync(companionStateDirectory),
     installCompanion,
+    openAnotherPanel,
+    savedToken: () => (existsSync(keychainPath) ? readFileSync(keychainPath, "utf8") : undefined),
+    removeSavedTokenOutsidePanel: () => rmSync(keychainPath, { force: true }),
   };
 }
 
-async function connect(page: Page, token = approvedToken) {
+async function connect(page: Page, token = approvedToken, { remember = true } = {}) {
   await expect(page.getByRole("status")).toContainText("Companion ready");
   await page.getByLabel("Fine-grained PAT", { exact: true }).fill(token);
-  await page.getByLabel("I authorize the local companion").check();
-  await page.getByRole("button", { name: "Connect (live)" }).click();
+  await page.getByLabel("Remember this PAT").setChecked(remember);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
 }
 
 async function sendTestPrompt(page: Page, modelId: string) {
@@ -99,7 +114,7 @@ test("explains how to install a missing companion, then finds it after installat
   const { page, networkRequests, installCompanion } = await openPanel({ withCompanion: false });
   await expect(page.getByRole("alert")).toContainText("npm run companion:install");
   await expect(page.getByRole("alert")).toContainText("companion_not_installed");
-  await expect(page.getByRole("button", { name: "Connect (live)" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Connect", exact: true })).toBeDisabled();
 
   await installCompanion();
   await page.getByRole("button", { name: "Check again" }).click();
@@ -109,19 +124,27 @@ test("explains how to install a missing companion, then finds it after installat
   expect(networkRequests).toEqual([]);
 });
 
+test("connects with the saved PAT once Check again finds the companion", async () => {
+  const { page, installCompanion } = await openPanel({ withCompanion: false, savedToken: approvedToken });
+  await expect(page.getByRole("alert")).toContainText("companion_not_installed");
+
+  await installCompanion();
+  await page.getByRole("button", { name: "Check again" }).click();
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+});
+
 test("connects through the companion and renders the approved reply as inert text", async () => {
   const { page, networkRequests, dialogs } = await openPanel();
   await expect(page.getByRole("status")).toContainText(/Companion ready \(Copilot SDK fake-\d+\)/);
-  const connectButton = page.getByRole("button", { name: "Connect (live)" });
+  await expect(page.getByText("No prompt is sent.")).toBeVisible();
+  const connectButton = page.getByRole("button", { name: "Connect", exact: true });
   await expect(connectButton).toBeDisabled();
   await page.getByLabel("Fine-grained PAT", { exact: true }).fill(approvedToken);
-  await expect(connectButton).toBeDisabled();
-  await page.getByLabel("I authorize the local companion").check();
   await connectButton.click();
 
   await expect(page.getByRole("status")).toContainText("Connected as octocat");
   await expect(page.getByLabel("Fine-grained PAT", { exact: true })).toHaveValue("");
-  await expect(page.getByLabel("I authorize the local companion")).not.toBeChecked();
+  await expect(connectButton).toBeDisabled();
   await expect(page.getByLabel("Model", { exact: true }).locator("option")).toHaveText([
     "Choose a model",
     "Fake reply (billing multiplier 0×)",
@@ -144,6 +167,90 @@ test("connects through the companion and renders the approved reply as inert tex
   await expect(sendButton).toBeDisabled();
   expect(dialogs).toEqual([]);
   expect(networkRequests).toEqual([]);
+});
+
+test("remembers an accepted PAT in the Keychain and connects with it when the panel opens again", async () => {
+  const { page, openAnotherPanel, savedToken, runningCompanions, networkRequests } = await openPanel();
+  await expect(page.getByLabel("Remember this PAT")).toBeChecked();
+  await connect(page);
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+  await expect(page.getByText("A PAT is saved in your macOS login keychain")).toBeVisible();
+  expect(savedToken()).toBe(approvedToken);
+  await expect(page.locator("body")).not.toContainText(approvedToken);
+
+  await page.close();
+  await expect.poll(runningCompanions).toEqual([]);
+  const reopened = await openAnotherPanel();
+  await expect(reopened.getByRole("status")).toContainText("Connected as octocat");
+  await expect(reopened.getByLabel("Fine-grained PAT", { exact: true })).toHaveValue("");
+  await expect(reopened.getByRole("button", { name: "Connect with saved PAT" })).toBeDisabled();
+  await expect(reopened.getByRole("button", { name: "Forget saved PAT" })).toBeEnabled();
+  expect(networkRequests).toEqual([]);
+});
+
+test("keeps the PAT only in memory when Remember is unchecked", async () => {
+  const { page, openAnotherPanel, savedToken, runningCompanions } = await openPanel();
+  await connect(page, approvedToken, { remember: false });
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+  await expect(page.getByRole("button", { name: "Forget saved PAT" })).toBeHidden();
+
+  await page.close();
+  await expect.poll(runningCompanions).toEqual([]);
+  expect(savedToken()).toBeUndefined();
+  const reopened = await openAnotherPanel();
+  await expect(reopened.getByRole("status")).toContainText("Companion ready");
+  await expect(reopened.getByRole("button", { name: "Connect with saved PAT" })).toBeHidden();
+});
+
+test("forgets the saved PAT and stays connected until Disconnect", async () => {
+  const { page, savedToken } = await openPanel({ savedToken: approvedToken });
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+
+  await page.getByRole("button", { name: "Forget saved PAT" }).click();
+  await expect(page.getByRole("button", { name: "Forget saved PAT" })).toBeHidden();
+  await expect(page.getByText("A PAT is saved in your macOS login keychain")).toBeHidden();
+  expect(savedToken()).toBeUndefined();
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+
+  await page.getByRole("button", { name: "Disconnect" }).click();
+  await expect(page.getByRole("status")).toContainText("Companion ready");
+  await expect(page.getByRole("button", { name: "Connect with saved PAT" })).toBeHidden();
+});
+
+test("explains a saved PAT that GitHub rejects and replaces it with a new one", async () => {
+  const { page, savedToken } = await openPanel({ savedToken: deniedToken });
+  await expect(page.getByRole("alert")).toContainText("GitHub did not accept the saved PAT");
+  await expect(page.getByRole("alert")).toContainText("auth_failed");
+  await expect(page.getByRole("status")).toContainText("Companion ready");
+  await expect(page.locator("body")).not.toContainText(deniedToken);
+
+  await connect(page);
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+  await expect(page.getByRole("alert")).toBeHidden();
+  await expect.poll(savedToken).toBe(approvedToken);
+});
+
+test("asks for a PAT when the saved one disappeared from the Keychain", async () => {
+  const { page, removeSavedTokenOutsidePanel } = await openPanel({ savedToken: approvedToken });
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+  await page.getByRole("button", { name: "Disconnect" }).click();
+  await expect(page.getByRole("status")).toContainText("Companion ready");
+
+  removeSavedTokenOutsidePanel();
+  await page.getByRole("button", { name: "Connect with saved PAT" }).click();
+  await expect(page.getByRole("alert")).toContainText("no_saved_token");
+  await expect(page.getByRole("status")).toContainText("Companion ready");
+  await expect(page.getByRole("button", { name: "Connect with saved PAT" })).toBeHidden();
+});
+
+test("stays connected and says so when the Keychain refuses to save the PAT", async () => {
+  const { page, savedToken } = await openPanel();
+  await connect(page, unsavableToken);
+
+  await expect(page.getByRole("alert")).toContainText("save_failed");
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
+  await expect(page.getByRole("button", { name: "Forget saved PAT" })).toBeHidden();
+  expect(savedToken()).toBeUndefined();
 });
 
 test("reports a rejected token without reflecting it and allows another attempt", async () => {
@@ -216,21 +323,25 @@ test("recovers after the companion exits unexpectedly", async () => {
   await expect(page.getByRole("status")).toContainText("Companion ready");
 });
 
-test("clearing ends the companion and starts a fresh one without credentials", async () => {
-  const { page, runningCompanions } = await openPanel();
-  await connect(page);
+test("disconnecting starts a fresh companion that waits for Connect with saved PAT", async () => {
+  const { page, runningCompanions } = await openPanel({ savedToken: approvedToken });
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
   await sendTestPrompt(page, "fake-reply");
   await expect(page.getByRole("status")).toContainText("Response complete");
   expect(runningCompanions()).toHaveLength(1);
   const [connectedCompanion] = runningCompanions();
 
-  await page.getByRole("button", { name: "Clear credentials and output" }).click();
+  await page.getByRole("button", { name: "Disconnect" }).click();
   await expect(page.getByRole("status")).toContainText("Companion ready");
   await expect.poll(runningCompanions).toHaveLength(1);
   expect(runningCompanions()).not.toContain(connectedCompanion);
+  await expect(page.getByRole("button", { name: "Disconnect" })).toBeHidden();
   await expect(page.getByLabel("Model", { exact: true })).toBeDisabled();
   await expect(page.getByLabel("Response output")).toHaveText("No response yet.");
   await expect(page.getByText("SDK usage report")).toBeHidden();
+
+  await page.getByRole("button", { name: "Connect with saved PAT" }).click();
+  await expect(page.getByRole("status")).toContainText("Connected as octocat");
 });
 
 test("closing the panel ends the companion", async () => {

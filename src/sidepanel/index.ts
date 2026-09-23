@@ -4,11 +4,13 @@ import {
   BRIDGE_FAILURE_TEXT,
   CONNECT_ERROR_TEXT,
   connectedStatus,
+  CREDENTIAL_ERROR_TEXT,
   MODEL_PLACEHOLDER_TEXT,
   modelOptionLabel,
   NO_RESPONSE_TEXT,
   NOT_FINE_GRAINED_PAT,
   readyStatus,
+  SAVED_TOKEN_REJECTED_TEXT,
   SEND_ERROR_TEXT,
   STATUS_TEXT,
   usageReport,
@@ -18,6 +20,7 @@ import type { ModelSummary } from "../protocol/messages.ts";
 import "./style.css";
 
 type PanelPhase = "detecting" | "unavailable" | "ready" | "connecting" | "connected" | "sending";
+type SessionError = Extract<SessionMessage, { type: "error" }>;
 
 function element<T extends HTMLElement>(id: string, type: new () => T): T {
   const found = document.getElementById(id);
@@ -29,22 +32,29 @@ const statusBar = element("status-bar", HTMLDivElement);
 const status = element("status", HTMLParagraphElement);
 const errorNotice = element("error", HTMLParagraphElement);
 const checkAgainButton = element("check-again", HTMLButtonElement);
+const savedTokenControls = element("saved-token", HTMLDivElement);
+const connectSavedButton = element("connect-saved", HTMLButtonElement);
+const forgetButton = element("forget", HTMLButtonElement);
 const authForm = element("auth-form", HTMLFormElement);
 const pat = element("pat", HTMLInputElement);
-const authConsent = element("auth-consent", HTMLInputElement);
+const remember = element("remember", HTMLInputElement);
 const connectButton = element("connect", HTMLButtonElement);
+const disconnectButton = element("disconnect", HTMLButtonElement);
 const model = element("model", HTMLSelectElement);
 const inferenceConsent = element("inference-consent", HTMLInputElement);
 const sendButton = element("send", HTMLButtonElement);
 const stopButton = element("stop", HTMLButtonElement);
 const output = element("output", HTMLPreElement);
 const usage = element("usage", HTMLParagraphElement);
-const clearButton = element("clear", HTMLButtonElement);
 
 let phase: PanelPhase = "detecting";
 let bridge: CompanionBridge | undefined;
 let sdkVersion = "";
 let stopRequested = false;
+let savedToken = false;
+let forgetPending = false;
+let connectingWithSavedToken = false;
+let autoConnect = true;
 
 function startCompanion() {
   phase = "detecting";
@@ -64,24 +74,39 @@ function resetPanel() {
   bridge?.close();
   bridge = undefined;
   pat.value = "";
-  authConsent.checked = false;
-  forgetConnection();
+  discardCompanionState();
   output.textContent = NO_RESPONSE_TEXT;
   hideUsage();
   hideError();
 }
 
-function forgetConnection() {
+function discardCompanionState() {
   stopRequested = false;
+  savedToken = false;
+  forgetPending = false;
+  connectingWithSavedToken = false;
   showModels([], MODEL_PLACEHOLDER_TEXT.disconnected);
+}
+
+function connectWithSavedToken() {
+  hideError();
+  if (bridge?.send({ type: "connect_saved" })) startConnecting({ withSavedToken: true });
+}
+
+function startConnecting({ withSavedToken }: { withSavedToken: boolean }) {
+  phase = "connecting";
+  connectingWithSavedToken = withSavedToken;
+  status.textContent = withSavedToken ? STATUS_TEXT.connectingWithSavedToken : STATUS_TEXT.connecting;
 }
 
 function handleBridgeEvent(event: BridgeEvent) {
   switch (event.type) {
     case "ready":
       sdkVersion = event.sdkVersion;
+      savedToken = event.savedToken;
       phase = "ready";
       status.textContent = readyStatus(sdkVersion);
+      if (savedToken && autoConnect) connectWithSavedToken();
       break;
     case "message":
       handleSessionMessage(event.message);
@@ -89,7 +114,7 @@ function handleBridgeEvent(event: BridgeEvent) {
     case "closed":
       bridge = undefined;
       phase = "unavailable";
-      forgetConnection();
+      discardCompanionState();
       status.textContent = STATUS_TEXT.unavailable;
       showError(BRIDGE_FAILURE_TEXT[event.failure], event.failure);
       break;
@@ -107,6 +132,10 @@ function handleSessionMessage(message: SessionMessage) {
       status.textContent = connectedStatus(message.login, message.models.length);
       return;
     }
+    case "credential":
+      savedToken = message.saved;
+      if (!message.saved) forgetPending = false;
+      return;
     case "delta":
       if (phase === "sending") output.append(message.text);
       return;
@@ -121,20 +150,30 @@ function handleSessionMessage(message: SessionMessage) {
       status.textContent = message.outcome === "stopped" ? STATUS_TEXT.stopped : STATUS_TEXT.complete;
       return;
     case "error":
-      if (message.stage === "connect") {
-        if (phase === "connecting") {
-          phase = "ready";
-          status.textContent = readyStatus(sdkVersion);
-        }
-        showError(CONNECT_ERROR_TEXT[message.code], message.code);
-      } else {
-        if (phase === "sending") {
-          phase = "connected";
-          status.textContent = STATUS_TEXT.sendFailed;
-        }
-        showError(SEND_ERROR_TEXT[message.code], message.code);
+      return handleSessionError(message);
+  }
+}
+
+function handleSessionError(message: SessionError) {
+  switch (message.stage) {
+    case "connect": {
+      if (phase === "connecting") {
+        phase = "ready";
+        status.textContent = readyStatus(sdkVersion);
       }
-      return;
+      if (message.code === "no_saved_token") savedToken = false;
+      const savedTokenRejected = message.code === "auth_failed" && connectingWithSavedToken;
+      return showError(savedTokenRejected ? SAVED_TOKEN_REJECTED_TEXT : CONNECT_ERROR_TEXT[message.code], message.code);
+    }
+    case "send":
+      if (phase === "sending") {
+        phase = "connected";
+        status.textContent = STATUS_TEXT.sendFailed;
+      }
+      return showError(SEND_ERROR_TEXT[message.code], message.code);
+    case "credential":
+      if (message.code === "forget_failed") forgetPending = false;
+      return showError(CREDENTIAL_ERROR_TEXT[message.code], message.code);
   }
 }
 
@@ -164,9 +203,14 @@ function hideUsage() {
 function updateControls() {
   const ready = phase === "ready";
   const connected = phase === "connected";
+  const connectionOpen = phase === "connecting" || connected || phase === "sending";
   pat.disabled = !ready;
-  authConsent.disabled = !ready;
-  connectButton.disabled = !ready || !authConsent.checked || pat.value.trim() === "";
+  remember.disabled = !ready;
+  connectButton.disabled = !ready || pat.value.trim() === "";
+  disconnectButton.hidden = !connectionOpen;
+  savedTokenControls.hidden = !savedToken;
+  connectSavedButton.disabled = !ready;
+  forgetButton.disabled = forgetPending;
   model.disabled = !connected || model.options.length <= 1;
   inferenceConsent.disabled = !connected || model.value === "";
   sendButton.disabled = !connected || model.value === "" || !inferenceConsent.checked;
@@ -179,15 +223,32 @@ authForm.addEventListener("submit", (event) => {
   if (connectButton.disabled) return;
   const token = pat.value.trim();
   pat.value = "";
-  authConsent.checked = false;
   hideError();
   if (!isFineGrainedPersonalAccessToken(token)) {
     showError(NOT_FINE_GRAINED_PAT.text, NOT_FINE_GRAINED_PAT.code);
-  } else if (bridge?.send({ type: "connect", token })) {
-    phase = "connecting";
-    status.textContent = STATUS_TEXT.connecting;
+  } else if (bridge?.send({ type: "connect", token, remember: remember.checked })) {
+    startConnecting({ withSavedToken: false });
   }
   updateControls();
+});
+
+connectSavedButton.addEventListener("click", () => {
+  if (connectSavedButton.disabled) return;
+  connectWithSavedToken();
+  updateControls();
+});
+
+forgetButton.addEventListener("click", () => {
+  if (forgetButton.disabled) return;
+  hideError();
+  if (bridge?.send({ type: "forget" })) forgetPending = true;
+  updateControls();
+});
+
+disconnectButton.addEventListener("click", () => {
+  autoConnect = false;
+  resetPanel();
+  startCompanion();
 });
 
 sendButton.addEventListener("click", () => {
@@ -216,16 +277,11 @@ stopButton.addEventListener("click", () => {
 
 checkAgainButton.addEventListener("click", () => {
   hideError();
-  startCompanion();
-});
-
-clearButton.addEventListener("click", () => {
-  resetPanel();
+  autoConnect = true;
   startCompanion();
 });
 
 pat.addEventListener("input", updateControls);
-authConsent.addEventListener("change", updateControls);
 inferenceConsent.addEventListener("change", updateControls);
 model.addEventListener("change", () => {
   inferenceConsent.checked = false;

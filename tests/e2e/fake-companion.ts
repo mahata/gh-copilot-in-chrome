@@ -1,7 +1,8 @@
-import { rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { GatewayFailure } from "../../src/companion/gateway.ts";
 import type { CopilotGateway } from "../../src/companion/gateway.ts";
+import type { CredentialStore } from "../../src/companion/keychain.ts";
 import { runCompanion } from "../../src/companion/run.ts";
 import type { TurnOutcome } from "../../src/protocol/messages.ts";
 
@@ -14,6 +15,7 @@ const FAKE_REPLY = ["Connection confirmed. ", "日本語 ", '<img src="x" onerro
 const STEP_DELAY_MS = 20;
 
 const runningMarker = join(requiredEnvironment("FAKE_COMPANION_STATE_DIR"), `${process.pid}.running`);
+const keychainPath = requiredEnvironment("FAKE_KEYCHAIN_PATH");
 writeFileSync(runningMarker, "");
 
 const companion = runCompanion({
@@ -22,6 +24,7 @@ const companion = runCompanion({
   stderr: process.stderr,
   args: process.argv.slice(2),
   createGateway: createFakeGateway,
+  store: createFakeKeychain(),
   sdkVersion: `fake-${process.pid}`,
 });
 process.once("SIGTERM", () => void companion.shutdown());
@@ -68,6 +71,32 @@ function createFakeGateway(): CopilotGateway {
     },
 
     async close() {},
+  };
+}
+
+function createFakeKeychain(): CredentialStore {
+  return {
+    async hasSavedToken() {
+      return existsSync(keychainPath);
+    },
+
+    async loadToken() {
+      await pause(STEP_DELAY_MS);
+      return existsSync(keychainPath) ? readFileSync(keychainPath, "utf8") : undefined;
+    },
+
+    async saveToken(token) {
+      await pause(STEP_DELAY_MS);
+      if (token.includes("NOSAVE")) throw new Error("The fake Keychain refused to save this PAT.");
+      writeFileSync(keychainPath, token);
+    },
+
+    async forgetToken() {
+      await pause(STEP_DELAY_MS);
+      const tokenWasSaved = existsSync(keychainPath);
+      rmSync(keychainPath, { force: true });
+      return tokenWasSaved;
+    },
   };
 }
 

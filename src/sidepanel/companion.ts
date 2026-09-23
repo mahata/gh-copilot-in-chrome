@@ -19,7 +19,7 @@ export type BridgeFailure =
 export type SessionMessage = Exclude<CompanionMessage, { type: "hello" } | { stage: "protocol" }>;
 
 export type BridgeEvent =
-  | { type: "ready"; sdkVersion: string }
+  | { type: "ready"; sdkVersion: string; savedToken: boolean }
   | { type: "message"; message: SessionMessage }
   | { type: "closed"; failure: BridgeFailure };
 
@@ -58,7 +58,7 @@ export function openCompanionBridge({ connectNative, readLastError, onEvent }: C
     if (phase === "starting") {
       if (message.type !== "hello" || message.protocolVersion !== PROTOCOL_VERSION) return disconnectForProtocolViolation();
       phase = "ready";
-      return onEvent({ type: "ready", sdkVersion: message.sdkVersion });
+      return onEvent({ type: "ready", sdkVersion: message.sdkVersion, savedToken: message.savedToken });
     }
     if (!isSessionMessage(message)) return disconnectForProtocolViolation();
     onEvent({ type: "message", message });

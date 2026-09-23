@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { createKeychainStore } from "./keychain.ts";
 import { runCompanion } from "./run.ts";
 import { createSdkGateway } from "./sdk-gateway.ts";
 import { isBoundedField } from "../protocol/messages.ts";
@@ -11,6 +12,7 @@ const companion = runCompanion({
   stderr: process.stderr,
   args: process.argv.slice(2),
   createGateway: createSdkGateway,
+  store: createKeychainStore(),
   sdkVersion: await readSdkVersion(),
 });
 process.once("SIGTERM", () => void companion.shutdown());

@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { HOST_NAME } from "../../src/protocol/identity.ts";
 import {
   BRIDGE_FAILURE_TEXT,
+  CONNECT_ERROR_TEXT,
   connectedStatus,
+  CREDENTIAL_ERROR_TEXT,
   modelOptionLabel,
   readyStatus,
+  SAVED_TOKEN_REJECTED_TEXT,
   SEND_ERROR_TEXT,
   usageReport,
 } from "../../src/sidepanel/copy.ts";
@@ -49,5 +53,35 @@ describe("side panel copy", () => {
 
   it("tells the user how to install a missing companion", () => {
     expect(BRIDGE_FAILURE_TEXT.companion_not_installed).toContain("npm run companion:install");
+  });
+
+  it("tells the user to rebuild and reload the extension when the companion speaks another protocol", () => {
+    expect(BRIDGE_FAILURE_TEXT.companion_protocol).toContain("npm run build");
+    expect(BRIDGE_FAILURE_TEXT.companion_protocol).toContain("chrome://extensions");
+  });
+
+  it("points to Disconnect before connecting with a different PAT", () => {
+    expect(CONNECT_ERROR_TEXT.already_connected).toContain("Disconnect");
+  });
+
+  it("offers to replace or forget a saved PAT that GitHub rejects", () => {
+    expect(SAVED_TOKEN_REJECTED_TEXT).toContain("saved PAT");
+    expect(SAVED_TOKEN_REJECTED_TEXT).toContain("Remember");
+    expect(SAVED_TOKEN_REJECTED_TEXT).toContain("Forget saved PAT");
+  });
+
+  it("asks for a pasted PAT when the saved one is gone or unreadable", () => {
+    expect(CONNECT_ERROR_TEXT.no_saved_token).toMatch(/paste a PAT/i);
+    expect(CONNECT_ERROR_TEXT.keychain_read_failed).toMatch(/paste a PAT/i);
+  });
+
+  it("says the PAT is still in use but must be pasted again when saving fails", () => {
+    expect(CREDENTIAL_ERROR_TEXT.save_failed).toContain("still connected");
+    expect(CREDENTIAL_ERROR_TEXT.save_failed).toContain("next time");
+  });
+
+  it("names the Keychain Access item to delete when forgetting fails", () => {
+    expect(CREDENTIAL_ERROR_TEXT.forget_failed).toContain("Keychain Access");
+    expect(CREDENTIAL_ERROR_TEXT.forget_failed).toContain(HOST_NAME);
   });
 });

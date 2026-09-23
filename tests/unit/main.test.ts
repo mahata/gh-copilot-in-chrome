@@ -1,8 +1,10 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFrameDecoder } from "../../src/companion/framing.ts";
 import { EXTENSION_ORIGIN } from "../../src/protocol/identity.ts";
 
@@ -12,13 +14,22 @@ const installedSdkVersion: unknown = JSON.parse(
 ).version;
 const startupTimeout = { timeout: 10_000 };
 const launchedCompanions: ChildProcess[] = [];
+let home: string;
+
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), "companion-home-"));
+});
 
 afterEach(() => {
   for (const child of launchedCompanions.splice(0)) child.kill("SIGKILL");
+  rmSync(home, { recursive: true, force: true });
 });
 
 function launchCompanion(args: string[]) {
-  const child = spawn(process.execPath, [mainPath, ...args], { stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [mainPath, ...args], {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, HOME: home },
+  });
   launchedCompanions.push(child);
   const frames: unknown[] = [];
   const decoder = createFrameDecoder((frame) => frames.push(frame));
@@ -42,14 +53,15 @@ describe("companion entry point", { timeout: 15_000 }, () => {
     expect(errorText()).toMatch(/only runs when Chrome starts it/);
   });
 
-  it("greets Chrome with the installed SDK version and exits when its input ends", async () => {
+  it("greets Chrome with the installed SDK version and no saved PAT in an empty home, then exits when its input ends", async () => {
     const { child, frames, exitCode } = launchCompanion([EXTENSION_ORIGIN]);
     await vi.waitFor(
-      () => expect(frames).toEqual([{ type: "hello", protocolVersion: 1, sdkVersion: installedSdkVersion }]),
+      () => expect(frames).toEqual([{ type: "hello", protocolVersion: 2, sdkVersion: installedSdkVersion, savedToken: false }]),
       startupTimeout,
     );
     child.stdin.end();
     await expect(exitCode).resolves.toBe(0);
+    expect(readdirSync(home)).toEqual([]);
   });
 
   it("exits cleanly when Chrome terminates it", async () => {

@@ -28,7 +28,7 @@ header > p:first-of-type { font-size: 1rem; color: var(--muted); }
 .status-bar + section { border-top: 0; }
 section { padding-block: 24px; border-top: 1px solid var(--line); }
 section > p, footer { color: var(--muted); }
-label:not(.consent) { display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 8px; }
+label:not(.checkbox) { display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 8px; }
 input[type="password"], select {
   display: block;
   width: 100%;
@@ -42,9 +42,12 @@ input[type="password"], select {
 }
 input[type="checkbox"] { accent-color: var(--accent); flex: 0 0 auto; width: 18px; height: 18px; margin: 3px 0 0; }
 input[type="password"]:disabled, select:disabled { background: transparent; color: var(--muted); cursor: not-allowed; }
-.consent { display: flex; gap: 10px; margin-block: 18px; font-size: 0.85rem; cursor: pointer; }
-.consent:has(input:disabled) { color: var(--muted); cursor: not-allowed; }
-.consent span { min-width: 0; overflow-wrap: anywhere; }
+.checkbox { display: flex; gap: 10px; margin-block: 18px; font-size: 0.85rem; cursor: pointer; }
+.checkbox:has(input:disabled) { color: var(--muted); cursor: not-allowed; }
+.checkbox span { min-width: 0; overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.saved-token { margin-bottom: 22px; }
+.saved-token p { margin-bottom: 12px; }
 button {
   min-height: 42px;
   border: 1px solid transparent;
