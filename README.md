@@ -123,20 +123,21 @@ The extension:
 
 The companion:
 
-- Exits unless Chrome started it for this extension. Chrome's host manifest also allows only
-  this extension ID.
+- Exits unless its first argument is this extension's origin, which Chrome passes when this
+  extension starts it. Chrome's host manifest also allows only this extension ID.
 - Accepts three messages: connect with a PAT, send using a model from this connection's
   list, and stop. It never accepts prompt text, because the fixed prompt lives in the
   companion.
 - Configures the SDK:
-  - `mode: "empty"`, `useLoggedInUser: false` and a minimal environment, so the runtime
-    cannot fall back to a stored CLI login, the keychain or a token from your shell.
+  - `mode: "empty"` and `useLoggedInUser: false`, which turn off the keychain, a stored CLI
+    login and the SDK's other ambient features.
   - No tools (`availableTools: []`), and every permission request is rejected.
   - A fresh session for each send, disconnected afterwards. Sub-agent events are ignored.
-- Starts the runtime with only a system `PATH`, plus `HOME` and `TMPDIR` pointing into a new
-  private temporary directory, and the variables the SDK adds. Proxy and custom CA settings
-  such as `HTTPS_PROXY` or `NODE_EXTRA_CA_CERTS` are not passed on, so networks that
-  require them will not work.
+- Gives the runtime a new private temporary directory as its `HOME`, `TMPDIR`, Copilot home
+  (`COPILOT_HOME`) and working directory, instead of your `~/.copilot` configuration. The
+  rest of its environment is a system `PATH` and the variables the SDK adds, so tokens such
+  as `GH_TOKEN` are not passed on. Neither are proxy and custom CA settings such as
+  `HTTPS_PROXY` or `NODE_EXTRA_CA_CERTS`, so networks that require them will not work.
 - Enforces limits: 64 KiB per inbound message, 1 MiB per outbound message (Chrome's limit),
   65,536 characters of output, 60 seconds per connect or send, and one operation at a time.
   The output and time limits end a request with an explicit error and keep the partial
@@ -159,6 +160,11 @@ Accepted risks:
 - The runtime keeps its default integration ID, `copilot-developer-cli`. The companion only
   names itself `gh-copilot-in-chrome` in the SDK's `clientInfo`, which labels the runtime's
   telemetry.
+- The SDK is young (1.0.x), so its options, defaults and events may change, including the
+  ones this lockdown relies on. `npm ci` installs the exact version pinned in
+  `package-lock.json`, and the status line names the running version. After updating the
+  SDK, review `src/companion/sdk-gateway.ts`, then run `npm run check` and the live check
+  again.
 
 GitHub receives the PAT, the fixed prompt with the SDK's system instructions, the chosen
 model, and whatever request metadata and telemetry the official runtime sends. This project
