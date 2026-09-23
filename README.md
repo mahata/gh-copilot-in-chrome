@@ -40,8 +40,8 @@ flowchart LR
 
 - macOS with Google Chrome 120 or later. The installer registers the companion with Google
   Chrome only, not with Chromium or other Chrome channels.
-- Node.js 22.18 or later, which runs the companion's TypeScript directly. Node.js 24 LTS is
-  recommended.
+- Node.js 24 and npm. The companion's TypeScript runs directly on the Node.js that ran the
+  installer.
 - A GitHub account with Copilot access, and permission to create a fine-grained PAT for
   it.
 
@@ -192,8 +192,16 @@ browser tests. The browser tests:
   connect-and-send and permission flows make none.
 
 No real PAT or Copilot allowance is used, so the tests do not establish live compatibility
-or billing. CI runs `npm run check` on Ubuntu, where Chromium also reads the profile's
-`NativeMessagingHosts` directory.
+or billing.
+
+CI runs the same checks on Ubuntu for pull requests, pushes to `main`, and on demand from
+the Actions tab. There, Chromium also reads the profile's `NativeMessagingHosts` directory.
+Unit tests and the type-checked build run in parallel. The E2E job then tests the exact
+`chrome-extension` artifact uploaded by the build, which you can also download from the
+run and load unpacked in place of `dist/`. The companion still comes from
+`npm run companion:install` in a checkout of the same commit. Playwright output, including
+layout screenshots, is uploaded as `playwright-test-results` even when tests fail. CI uses
+no secrets and has read-only repository access.
 
 The code is organized as:
 
