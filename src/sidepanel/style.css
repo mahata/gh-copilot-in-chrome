@@ -7,6 +7,7 @@
   line-height: 1.55;
   --page: #f5f7fa;
   --muted: #505e70;
+  --placeholder: #667080;
   --line: #cad2de;
   --surface: #fff;
   --accent: #174f9c;
@@ -41,7 +42,7 @@ input[type="password"], select, textarea {
   font: inherit;
   font-size: 0.9rem;
 }
-::placeholder { color: var(--muted); opacity: 0.6; }
+::placeholder { color: var(--placeholder); opacity: 1; }
 input:disabled, select:disabled, textarea:disabled { background: transparent; color: var(--muted); cursor: not-allowed; }
 textarea { height: 140px; resize: none; overflow-y: auto; }
 button {
@@ -114,6 +115,7 @@ pre {
     color: #e3e9f2;
     --page: #18212d;
     --muted: #b5c2d4;
+    --placeholder: #8995a7;
     --line: #536176;
     --surface: #202c3c;
     --accent: #92baff;
