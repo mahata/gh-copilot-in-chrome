@@ -4,26 +4,32 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": "24.x"
+    "node": "26.x"
   },
+  "packageManager": "pnpm@10.33.0",
   "scripts": {
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "npm run build && playwright test",
-    "check": "npm test && npm run test:e2e",
+    "test:e2e": "pnpm build && playwright test",
+    "check": "pnpm test && pnpm test:e2e",
     "companion:install": "node src/companion/install-cli.ts",
     "companion:uninstall": "node src/companion/install-cli.ts --uninstall"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.0",
     "@types/chrome": "^0.3.0",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.0.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
     "vitest": "^5.0.1"
   },
   "dependencies": {
     "@github/copilot-sdk": "^1.0.14"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "koffi"
+    ]
   }
 }

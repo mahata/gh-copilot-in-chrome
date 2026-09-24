@@ -51,7 +51,7 @@ export async function runInstaller({ args, platform, home, nodePath, companionEn
     output.log("Removed the gh-copilot-in-chrome companion.");
     return forgetSavedToken(store, output);
   }
-  output.error("Usage: npm run companion:install | npm run companion:uninstall");
+  output.error("Usage: pnpm companion:install | pnpm companion:uninstall");
   return FAILURE;
 }
 

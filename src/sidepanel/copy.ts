@@ -3,7 +3,7 @@ import { HOST_NAME } from "../protocol/identity.ts";
 import { CONNECT_TIMEOUT_MS, MAX_OUTPUT_LENGTH, MAX_PROMPT_LENGTH, TURN_TIMEOUT_MS } from "../protocol/messages.ts";
 import type { ErrorCode, ModelSummary } from "../protocol/messages.ts";
 
-const REINSTALL_HINT = "run npm run companion:install in this repository's checkout, then choose Try again.";
+const REINSTALL_HINT = "run pnpm companion:install in this repository's checkout, then choose Try again.";
 const CONNECT_TIMEOUT_SECONDS = CONNECT_TIMEOUT_MS / 1000;
 const TURN_TIMEOUT_MINUTES = TURN_TIMEOUT_MS / 60_000;
 const OUTPUT_LIMIT = formatCount(MAX_OUTPUT_LENGTH);
@@ -37,7 +37,7 @@ export const BRIDGE_FAILURE_TEXT: Record<BridgeFailure, string> = {
   companion_exited: "The companion stopped unexpectedly, discarding its PAT and SDK session. Choose Try again to start a fresh one.",
   companion_protocol:
     "The companion sent a message this panel does not accept, so the panel disconnected it. " +
-    "If you updated this checkout, run npm run build and reload the extension in chrome://extensions. " +
+    "If you updated this checkout, run pnpm build and reload the extension in chrome://extensions. " +
     `Otherwise, ${REINSTALL_HINT}`,
 };
 

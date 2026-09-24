@@ -36,12 +36,12 @@ describe("side panel copy", () => {
   });
 
   it("tells the user how to install a missing companion and retry", () => {
-    expect(BRIDGE_FAILURE_TEXT.companion_not_installed).toContain("npm run companion:install");
+    expect(BRIDGE_FAILURE_TEXT.companion_not_installed).toContain("pnpm companion:install");
     expect(BRIDGE_FAILURE_TEXT.companion_not_installed).toContain("Try again");
   });
 
   it("tells the user to rebuild and reload the extension when the companion speaks another protocol", () => {
-    expect(BRIDGE_FAILURE_TEXT.companion_protocol).toContain("npm run build");
+    expect(BRIDGE_FAILURE_TEXT.companion_protocol).toContain("pnpm build");
     expect(BRIDGE_FAILURE_TEXT.companion_protocol).toContain("chrome://extensions");
   });
 
