@@ -14,6 +14,7 @@ export function createTranscript(log: HTMLElement) {
     turnCount = 0;
     log.setAttribute("aria-busy", "false");
     log.replaceChildren();
+    log.hidden = true;
   }
 
   function startTurn(prompt: string, replyAuthor: string): TranscriptTurn {
@@ -30,6 +31,8 @@ export function createTranscript(log: HTMLElement) {
       note,
     );
     turnCount += 1;
+    // Attach the live region before the first turn lands so streamed replies are announced.
+    log.hidden = false;
     log.append(turn);
     log.setAttribute("aria-busy", "true");
     scrollToEnd();

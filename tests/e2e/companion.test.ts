@@ -206,12 +206,14 @@ test("asks a new user only for a PAT, then chats with the cheapest model presele
   await expect(modelSelect).toHaveValue("fake-reply");
   const conversation = conversationLog(page);
   await expect(conversation).toBeEmpty();
+  await expect(conversation).toBeHidden();
   const sendButton = button(page, "Send");
   await expect(sendButton).toBeDisabled();
 
   const prompt = "Explain <b>bold</b> & <i>italic</i> tags.";
   await sendPrompt(page, prompt);
   await expectReplyFinished(page);
+  await expect(conversation).toBeVisible();
   await expect(conversation.getByRole("article")).toHaveText(
     `You ${prompt} Copilot (Fake reply) Reply 1 (fake-reply) to: ${prompt} 日本語 ${inertMarkup}`,
     { useInnerText: true },
@@ -255,6 +257,7 @@ test("keeps the conversation across turns and model changes until New chat start
 
   await newChatButton.click();
   await expect(conversation).toBeEmpty();
+  await expect(conversation).toBeHidden();
   await expect(newChatButton).toBeHidden();
   await expect(promptField(page)).toBeFocused();
   await expect(page.getByLabel("Model", { exact: true })).toHaveValue("fake-other");
