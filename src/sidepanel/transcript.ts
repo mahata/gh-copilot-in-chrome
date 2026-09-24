@@ -1,4 +1,5 @@
 import { PROMPT_AUTHOR_LABEL } from "./copy.ts";
+import { renderMarkdown } from "./markdown.ts";
 
 export type TranscriptTurn = {
   appendReply: (text: string) => void;
@@ -18,7 +19,10 @@ export function createTranscript(log: HTMLElement) {
   }
 
   function startTurn(prompt: string, replyAuthor: string): TranscriptTurn {
-    const reply = textElement("pre", "reply", "");
+    const reply = document.createElement("div");
+    reply.className = "reply";
+    let replyText = "";
+    let pendingFrame: number | undefined;
     const note = textElement("p", "turn-note", "");
     note.hidden = true;
     const turn = document.createElement("article");
@@ -37,11 +41,20 @@ export function createTranscript(log: HTMLElement) {
     log.setAttribute("aria-busy", "true");
     scrollToEnd();
 
+    // Markdown can only be parsed as a whole, so each frame re-renders everything received so far.
+    function renderReply() {
+      if (pendingFrame !== undefined) cancelAnimationFrame(pendingFrame);
+      pendingFrame = undefined;
+      keepingEndInView(() => reply.replaceChildren(renderMarkdown(replyText)));
+    }
+
     return {
       appendReply(text) {
-        keepingEndInView(() => reply.append(text));
+        replyText += text;
+        pendingFrame ??= requestAnimationFrame(renderReply);
       },
       finish(noteText) {
+        renderReply();
         if (noteText !== undefined) {
           keepingEndInView(() => {
             note.textContent = noteText;
