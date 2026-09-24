@@ -117,7 +117,7 @@ test.afterEach(async () => {
 
 test("explains how to install a missing companion, then finds it after installation", async () => {
   const { page, networkRequests, installCompanion } = await openPanel({ withCompanion: false });
-  await expect(page.getByRole("alert")).toContainText("npm run companion:install");
+  await expect(page.getByRole("alert")).toContainText("pnpm companion:install");
   await expect(page.getByRole("alert")).toContainText("companion_not_installed");
   await expect(page.getByRole("button", { name: "Connect", exact: true })).toBeDisabled();
 

@@ -44,17 +44,17 @@ flowchart LR
 
 - macOS with Google Chrome 120 or later. The installer registers the companion with Google
   Chrome only, not with Chromium or other Chrome channels.
-- Node.js 24 and npm. The companion's TypeScript runs directly on the Node.js that ran the
-  installer.
+- Node.js 26 and pnpm 10.33.0. Install pnpm separately; the companion's TypeScript runs
+  directly on the Node.js that ran the installer.
 - A GitHub account with Copilot access, and permission to create a fine-grained PAT for
   it.
 
 ## Install
 
 ```sh
-npm ci
-npm run build
-npm run companion:install
+pnpm install --frozen-lockfile
+pnpm build
+pnpm companion:install
 ```
 
 In Chrome, open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**,
@@ -63,7 +63,7 @@ to `hdmfkhdfamhcfglofebjnoepkbbbihkg`, and the companion accepts only that ID. O
 extension from the toolbar. The status line should read "Companion ready (Copilot SDK
 *version*). Not connected to GitHub."
 
-`npm run companion:install` writes two files:
+`pnpm companion:install` writes two files:
 
 - `~/Library/Application Support/gh-copilot-in-chrome/companion`: a launcher that runs this
   checkout's `src/companion/main.ts` with the Node.js that ran the installer.
@@ -71,7 +71,7 @@ extension from the toolbar. The status line should read "Companion ready (Copilo
   registers the launcher with Chrome for this extension only.
 
 Run it again after moving this checkout or changing Node.js. To remove the companion, run
-`npm run companion:uninstall`, which also deletes any saved PAT from your login keychain,
+`pnpm companion:uninstall`, which also deletes any saved PAT from your login keychain,
 then remove the extension in `chrome://extensions`.
 
 ## Use
@@ -134,12 +134,12 @@ If something fails:
   `policy.state: "enabled"`, and it does not guess when that field is missing. Record the
   result and stop, because the filter may need revisiting.
 - **`sdk_start_failed`:** the SDK's platform runtime may be missing. It is an optional
-  dependency (`@github/copilot-sdk-darwin-arm64` or `-darwin-x64`), so run `npm ci` without
-  `--omit=optional`.
+  dependency (`@github/copilot-sdk-darwin-arm64` or `-darwin-x64`), so run
+  `pnpm install --frozen-lockfile` without `--no-optional`.
 - **`keychain_read_failed`, `save_failed` or `forget_failed`:** `/usr/bin/security` could
   not read, save or delete the saved PAT. Pasting a PAT still connects. Record the result,
   and delete any leftover item in Keychain Access.
-- **`companion_*` codes:** the panel names the fix. Most need `npm run companion:install`
+- **`companion_*` codes:** the panel names the fix. Most need `pnpm companion:install`
   followed by **Check again**.
 
 Stop when GitHub denies access. Do not work around a denial with a stored login, a `gh`
@@ -178,7 +178,7 @@ The companion:
     cancels that save, so the last choice wins.
   - At startup it checks only whether the item exists. It reads the PAT only to connect
     with it, and uses it only if it is still a well-formed fine-grained PAT.
-  - It deletes the item on **Forget saved PAT** and on `npm run companion:uninstall`.
+  - It deletes the item on **Forget saved PAT** and on `pnpm companion:uninstall`.
   - It runs `/usr/bin/security` with only `HOME` and a system `PATH`, and stops it after
     10 seconds. The PAT goes in on standard input rather than as an argument, the tool's
     error output is discarded, and the PAT is never logged.
@@ -237,9 +237,9 @@ Accepted risks:
   names itself `gh-copilot-in-chrome` in the SDK's `clientInfo`, which labels the runtime's
   telemetry.
 - The SDK is young (1.0.x), so its options, defaults and events may change, including the
-  ones this lockdown relies on. `npm ci` installs the exact version pinned in
-  `package-lock.json`, and the status line names the running version. After updating the
-  SDK, review `src/companion/sdk-gateway.ts`, then run `npm run check` and the live check
+  ones this lockdown relies on. `pnpm install --frozen-lockfile` installs the exact version
+  pinned in `pnpm-lock.yaml`, and the status line names the running version. After updating
+  the SDK, review `src/companion/sdk-gateway.ts`, then run `pnpm check` and the live check
   again.
 
 GitHub receives the PAT, your prompts and the conversation so far with the SDK's system
@@ -251,12 +251,12 @@ already sent.
 ## Development
 
 ```sh
-npm test
-npx playwright install chromium
-npm run check
+pnpm test
+pnpm exec playwright install chromium
+pnpm check
 ```
 
-`npm run check` runs the unit tests, strict TypeScript checking, a production build and the
+`pnpm check` runs the unit tests, strict TypeScript checking, a production build and the
 browser tests. The browser tests:
 
 - Use the real installer to register a scripted fake companion in a throwaway Chromium
@@ -281,7 +281,7 @@ the Actions tab. There, Chromium also reads the profile's `NativeMessagingHosts`
 Unit tests and the type-checked build run in parallel. The E2E job then tests the exact
 `chrome-extension` artifact uploaded by the build, which you can also download from the
 run and load unpacked in place of `dist/`. The companion still comes from
-`npm run companion:install` in a checkout of the same commit. Playwright output, including
+`pnpm companion:install` in a checkout of the same commit. Playwright output, including
 layout screenshots, is uploaded as `playwright-test-results` even when tests fail. CI uses
 no secrets and has read-only repository access.
 

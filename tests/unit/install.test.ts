@@ -155,7 +155,7 @@ describe("runInstaller", () => {
 
   it.each([
     ["outside macOS", { platform: "linux" as const }, /macOS only/],
-    ["with an unknown argument", { args: ["--force"] }, /Usage: npm run companion:install/],
+    ["with an unknown argument", { args: ["--force"] }, /Usage: pnpm companion:install/],
   ])("refuses to run %s without touching the home directory", async (_description, overrides, message) => {
     await expect(install(overrides)).resolves.toBe(1);
     expect(messages.error.join("\n")).toMatch(message);

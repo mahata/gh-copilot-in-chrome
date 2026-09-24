@@ -13,7 +13,7 @@ updates:
       prefix: build
       include: scope
     groups:
-      npm-minor-and-patch:
+      pnpm-minor-and-patch:
         patterns:
           - "*"
         update-types:
