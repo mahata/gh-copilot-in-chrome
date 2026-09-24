@@ -96,22 +96,45 @@ function createFakeKeychain(): CredentialStore {
 
     async loadToken() {
       await pause(STEP_DELAY_MS);
-      return existsSync(keychainPath) ? readFileSync(keychainPath, "utf8") : undefined;
+      const token = savedFakeToken();
+      if (token?.includes("LOCKED")) throw new Error("The fake Keychain is locked.");
+      if (token?.includes("VANISH")) {
+        rmSync(keychainPath, { force: true });
+        return undefined;
+      }
+      return token;
     },
 
     async saveToken(token) {
       await pause(STEP_DELAY_MS);
+      if (token.includes("HOLD")) await waitForKeychainRelease();
       if (token.includes("NOSAVE")) throw new Error("The fake Keychain refused to save this PAT.");
       writeFileSync(keychainPath, token);
     },
 
     async forgetToken() {
       await pause(STEP_DELAY_MS);
-      const tokenWasSaved = existsSync(keychainPath);
+      const token = savedFakeToken();
+      if (token?.includes("HOLD")) await waitForKeychainRelease();
+      if (token?.includes("NOFORGET")) throw new Error("The fake Keychain refused to delete this PAT.");
       rmSync(keychainPath, { force: true });
-      return tokenWasSaved;
+      return token !== undefined;
     },
   };
+}
+
+async function waitForKeychainRelease() {
+  const releasePath = `${keychainPath}.release`;
+  const deadline = Date.now() + 10_000;
+  while (!existsSync(releasePath)) {
+    if (Date.now() > deadline) throw new Error("The test never released the fake Keychain.");
+    await pause(STEP_DELAY_MS);
+  }
+  rmSync(releasePath);
+}
+
+function savedFakeToken() {
+  return existsSync(keychainPath) ? readFileSync(keychainPath, "utf8") : undefined;
 }
 
 function crash(): never {

@@ -8,82 +8,39 @@
   </head>
   <body>
     <main>
-      <header>
-        <h1>Copilot in Chrome (unofficial)</h1>
-        <p>Chat with GitHub Copilot from Chrome through the official SDK.</p>
-        <p class="disclosure">This private, unofficial prototype has no network access of its own.
-          It talks only to a companion on this Mac, which runs the official GitHub Copilot SDK.
-          Page capture is outside its scope.</p>
-      </header>
-
-      <div id="status-bar" class="status-bar">
-        <p id="status" role="status"></p>
-        <p id="error" role="alert" hidden></p>
-        <button id="check-again" class="secondary" type="button" hidden>Check again</button>
+      <div id="chat-actions" class="chat-actions" hidden>
+        <button id="new-chat" class="quiet" type="button" hidden disabled>New chat</button>
+        <button id="sign-out" class="quiet" type="button" disabled>Sign out</button>
       </div>
 
-      <section aria-labelledby="auth-heading">
-        <h2 id="auth-heading">Connect with a PAT</h2>
-        <p>Use a fresh, expiring fine-grained PAT with your personal account as resource owner and
-          <strong>Copilot Requests</strong> permission only.</p>
-        <p id="credential-note">The panel hands the token to the local companion and clears this field.
-          The companion keeps it in memory until you disconnect or close this panel.
-          With Remember checked, it also saves the token in your macOS login keychain once GitHub accepts it.
-          Never paste it into chat or an issue.</p>
-        <p>Connecting starts the Copilot SDK on this Mac, which checks the PAT with GitHub and lists your
-          models. No prompt is sent.</p>
-        <div id="saved-token" class="saved-token" hidden>
-          <p>A PAT is saved in your macOS login keychain. While it is saved, the panel connects with it
-            each time it opens.</p>
-          <div class="actions">
-            <button id="connect-saved" type="button" disabled>Connect with saved PAT</button>
-            <button id="forget" class="secondary" type="button">Forget saved PAT</button>
-          </div>
-        </div>
-        <form id="auth-form">
-          <label for="pat">Fine-grained PAT</label>
-          <input id="pat" type="password" autocomplete="off" spellcheck="false"
-            autocapitalize="off" maxlength="511" aria-describedby="credential-note" disabled>
-          <label class="checkbox">
-            <input id="remember" type="checkbox" checked disabled>
-            <span>Remember this PAT in my macOS login keychain</span>
-          </label>
-          <div class="actions">
-            <button id="connect" type="submit" disabled>Connect</button>
-            <button id="disconnect" class="secondary" type="button" hidden>Disconnect</button>
-          </div>
-        </form>
-      </section>
+      <div class="notice">
+        <p id="status" class="status" role="status"></p>
+        <p id="error" class="error" role="alert" hidden></p>
+        <button id="try-again" class="secondary" type="button" hidden>Try again</button>
+      </div>
 
-      <section aria-labelledby="chat-heading">
-        <div class="section-heading">
-          <h2 id="chat-heading">Chat</h2>
-          <button id="new-chat" class="secondary" type="button" disabled>New chat</button>
+      <form id="auth-form" class="auth" hidden>
+        <label for="pat">Copilot needs a fine-grained PAT with the Copilot Requests permission to sign in as you.</label>
+        <div class="row">
+          <input id="pat" type="password" placeholder="github_pat_…" autocomplete="off" spellcheck="false"
+            autocapitalize="off" maxlength="511" disabled>
+          <button id="connect" type="submit" disabled>Connect</button>
         </div>
-        <p>Every prompt you send is a live request that uses your Copilot allowance at the chosen model's
-          billing multiplier. Stopping may not prevent server-side work or charges.</p>
-        <p>Only models the SDK reports as enabled for your account are offered. The session has no tools,
-          so it cannot read files or run commands, and replies appear as plain text.</p>
+      </form>
+
+      <section id="chat" class="chat" aria-label="Chat" hidden>
         <div id="transcript" class="transcript" role="log" aria-label="Conversation" tabindex="0"></div>
-        <form id="prompt-form">
-          <label for="model">Model</label>
-          <select id="model" disabled></select>
-          <label for="prompt">Prompt</label>
-          <textarea id="prompt" rows="4" aria-describedby="prompt-hint prompt-limit" disabled></textarea>
-          <p id="prompt-hint" class="hint">⌘ Enter or Ctrl Enter sends. Enter starts a new line.</p>
+        <form id="prompt-form" class="composer">
+          <textarea id="prompt" rows="3" placeholder="Ask Copilot" aria-label="Prompt" aria-describedby="prompt-limit"
+            aria-keyshortcuts="Meta+Enter Control+Enter" disabled></textarea>
           <p id="prompt-limit" class="prompt-limit" hidden></p>
-          <div class="actions">
+          <div class="row">
+            <select id="model" aria-label="Model" disabled></select>
             <button id="send" type="submit" disabled>Send</button>
-            <button id="stop" class="secondary" type="button" disabled>Stop</button>
+            <button id="stop" class="secondary" type="button" hidden disabled>Stop</button>
           </div>
         </form>
       </section>
-      <footer>
-        <p>GitHub processes live requests under its account policies and data-handling terms.
-          Disconnecting or forgetting the saved PAT does not delete data already sent to GitHub.</p>
-        <p>This project is not affiliated with GitHub. The extension stores nothing in Chrome, sends no
-          analytics, and never retries a failed request on its own.</p>
-      </footer>
     </main>
   </body>
 </html>
