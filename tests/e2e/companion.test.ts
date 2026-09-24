@@ -333,6 +333,10 @@ test("renders Markdown in replies with links limited to safe schemes and raw HTM
     "1. first",
     "2. second",
     "",
+    "* [ ] loose one",
+    "",
+    "* [x] loose two",
+    "",
     "```ts",
     "const x = 1 < 2;",
     "```",
@@ -361,10 +365,16 @@ test("renders Markdown in replies with links limited to safe schemes and raw HTM
     "textContent",
     "Some bold, italic, a<b and gone text,\non two lines. Tom & Jerry.",
   );
-  await expect(reply.locator("ul > li")).toHaveText(["done", "plain"]);
-  await expect(reply.locator("ul input[type=checkbox]")).toBeChecked();
-  await expect(reply.locator("ul input[type=checkbox]")).toBeDisabled();
+  const tightList = reply.locator("ul").first();
+  await expect(tightList.locator("li")).toHaveText(["done", "plain"]);
+  await expect(tightList.locator("input[type=checkbox]")).toBeChecked();
+  await expect(tightList.locator("input[type=checkbox]")).toBeDisabled();
   await expect(reply.locator("ol > li")).toHaveText(["first", "second"]);
+  const looseTasks = reply.locator("ul").nth(1).locator("li");
+  await expect(looseTasks).toHaveText(["loose one", "loose two"]);
+  await expect(looseTasks.locator("input[type=checkbox]")).toHaveCount(2);
+  await expect(looseTasks.nth(0).locator("input")).not.toBeChecked();
+  await expect(looseTasks.nth(1).locator("input")).toBeChecked();
   await expect(reply.locator("pre > code")).toHaveText("const x = 1 < 2;");
   await expect(reply.locator("blockquote")).toHaveText("quoted");
   await expect(reply.locator("th")).toHaveText(["Name", "Value"]);

@@ -146,6 +146,8 @@ function inlineNode(token: Token): Node {
       return element("code", (token as Tokens.Codespan).text);
     case "br":
       return document.createElement("br");
+    case "checkbox":
+      return checkbox((token as Tokens.Checkbox).checked);
     case "link": {
       const link = token as Tokens.Link;
       const href = safeHref(link.autolink ? link.href : decodeEntities(link.href));
