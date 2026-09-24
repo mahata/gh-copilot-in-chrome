@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { GatewayFailure } from "../../src/companion/gateway.ts";
 import type { CopilotGateway } from "../../src/companion/gateway.ts";
@@ -46,6 +46,7 @@ function createFakeGateway(): CopilotGateway {
     },
 
     startTurn({ model, prompt, onEvent }) {
+      appendFileSync(`${keychainPath}.prompts`, `${JSON.stringify(prompt)}\n`);
       turnsInConversation += 1;
       const reply = [`Reply ${turnsInConversation} (${model}) to: `, prompt, " 日本語 ", INERT_MARKUP];
       let abortRequested = false;

@@ -289,8 +289,9 @@ function updateControls() {
   pat.disabled = !ready;
   connectButton.disabled = !ready || pat.value.trim() === "";
   newChatButton.hidden = !transcript.hasTurns();
-  newChatButton.disabled = !connected;
-  signOutButton.disabled = !companionReady || signOutPending;
+  // A pending capture sends into the current conversation and account once it finishes.
+  newChatButton.disabled = !connected || capturingPage;
+  signOutButton.disabled = !companionReady || signOutPending || capturingPage;
   model.disabled = !connected || !hasModels || capturingPage;
   includePage.disabled = !(connected || sending) || !hasModels || capturingPage;
   promptInput.disabled = !(connected || sending) || !hasModels || capturingPage;

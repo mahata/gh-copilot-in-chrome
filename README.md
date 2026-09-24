@@ -88,14 +88,17 @@ then remove the extension in `chrome://extensions`.
   model you last selected for that GitHub account when it remains available; otherwise, it
   preselects the model with the lowest billing multiplier. Each option ends with the
   multiplier the SDK reported, such as "(1×)".
-- **Replies:** they stream in as plain text, and the conversation follows them while you
-  are scrolled to its end. While a reply streams, **Stop** replaces **Send**. It ends the
+- **Replies:** they stream in and render as Markdown (headings, lists, code blocks,
+  tables, links), and the conversation follows them while you are scrolled to its end.
+  Links open in a new tab; only `http`, `https` and `mailto` links are clickable, and
+  images appear as links because the panel loads no remote content. While a reply streams, **Stop** replaces **Send**. It ends the
   reply early and keeps what arrived. You can draft the next prompt meanwhile.
 - **Pages:** tick **Include this page** before sending to have Copilot read the tab you are
   viewing. The panel reads the page's title, URL, visible text and any text you selected,
   and sends them with that one prompt. The box clears after each send. Chrome lets the
   extension read a tab only after you click the toolbar icon while that tab is open, and
-  only until the tab navigates elsewhere. If the panel cannot read the tab, it sends nothing
+  only until the tab closes or navigates to a different site (origin). Pages on the same
+  origin stay readable after a navigation. If the panel cannot read the tab, it sends nothing
   and says `page_unavailable`: click the toolbar icon on that tab and send again. Chrome
   never allows reading `chrome://` pages, the Chrome Web Store or other extensions. Up to
   100,000 characters of text and 32,768 of selection are sent, and a note tells Copilot when
@@ -133,9 +136,9 @@ CI.
    for a long answer and choose **Stop** while it streams. The partial reply should stay,
    marked "Stopped. Output may be incomplete."
 6. Open an ordinary web page, click the toolbar icon on it, tick **Include this page** and
-   ask for a summary. The reply should reflect the page. Then follow a link on that page,
-   tick the box again and send: the panel should report `page_unavailable` and send
-   nothing until you click the toolbar icon again. Record whether clicking the icon while
+   ask for a summary. The reply should reflect the page. Then follow a link on that page
+   to a different site, tick the box again and send: the panel should report
+   `page_unavailable` and send nothing until you click the toolbar icon again. Record whether clicking the icon while
    the panel is open grants access, closes the panel, or both.
 7. Close the panel and open it again. It should open straight into the chat, connected
    with the saved PAT.
@@ -174,7 +177,8 @@ The extension:
 
 - Requests only `sidePanel`, `nativeMessaging`, `activeTab` and `scripting`. It has no host
   permissions and no content scripts. `activeTab` gives it access only to a tab where you
-  clicked its toolbar icon, until that tab navigates elsewhere, and Chrome shows no
+  clicked its toolbar icon, until that tab closes or navigates to another origin
+  (same-origin navigation keeps it), and Chrome shows no
   install-time warning for it.
 - Runs a script in a tab only when you send a prompt with **Include this page** ticked. The
   script runs in the tab's top frame, reads `document.title`, `location.href`, the body's
@@ -187,7 +191,9 @@ The extension:
   keychain; available models and the conversation live only in the panel's memory.
 - Sends only the prompts you submit, exactly as typed, and refuses any over 32,768
   characters. It attaches page content only as described above, and never files.
-- Renders prompts and responses as text, never as HTML. Errors show fixed text and a code,
+- Renders prompts as plain text. Renders responses as Markdown by building DOM nodes from
+  [marked](https://marked.js.org/)'s tokens, never through `innerHTML`, so raw HTML in a
+  response shows as literal text. Errors show fixed text and a code,
   never the server's text or the token.
 
 The companion:
@@ -350,7 +356,8 @@ The code is organized as:
   `assistant.message_delta`, `session.idle` and the `assistant.usage` multiplier.
 - [`activeTab`](https://developer.chrome.com/docs/extensions/develop/concepts/activeTab) and
   [`chrome.scripting`](https://developer.chrome.com/docs/extensions/reference/api/scripting):
-  temporary access to the tab where the user invoked the extension, ended by navigation.
+  temporary access to the tab where the user invoked the extension, kept across same-origin navigation and ended by
+  navigating to another origin or closing the tab.
 - [Chrome native messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging)
   and [the manifest `key`](https://developer.chrome.com/docs/extensions/reference/manifest/key).
 - `man security`, under `add-generic-password`: `-U` replaces an existing item, and by
