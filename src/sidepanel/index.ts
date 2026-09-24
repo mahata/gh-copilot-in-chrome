@@ -11,7 +11,7 @@ import {
   modelOptionLabel,
   NO_MODELS_TEXT,
   NOT_FINE_GRAINED_PAT,
-  PAGE_CAPTURE_ERROR_TEXT,
+  pageCaptureErrorText,
   promptTooLongText,
   replyAuthorLabel,
   SAVED_TOKEN_REJECTED_TEXT,
@@ -346,7 +346,7 @@ async function sendWithPage(chosenModel: ModelSummary, prompt: string) {
   if (bridge !== capturingBridge || !capturingPage) return;
   capturingPage = false;
   if (!result.ok) {
-    showError(PAGE_CAPTURE_ERROR_TEXT[result.failure], result.failure);
+    showError(pageCaptureErrorText(result.failure, result.detail), result.failure);
   } else if (phase === "connected" && modelsById.get(chosenModel.id) === chosenModel) {
     sendPrompt(chosenModel, prompt, result.page);
   }
