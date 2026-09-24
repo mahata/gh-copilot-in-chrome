@@ -41,9 +41,9 @@ input[type="password"], select, textarea {
   font: inherit;
   font-size: 0.9rem;
 }
-::placeholder { color: var(--muted); opacity: 1; }
+::placeholder { color: var(--muted); opacity: 0.6; }
 input:disabled, select:disabled, textarea:disabled { background: transparent; color: var(--muted); cursor: not-allowed; }
-textarea { min-height: 80px; max-height: 40vh; resize: vertical; }
+textarea { height: 140px; resize: none; overflow-y: auto; }
 button {
   flex: none;
   min-height: 42px;
