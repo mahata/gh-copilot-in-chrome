@@ -78,10 +78,6 @@ button.quiet:disabled { background: transparent; opacity: 0.6; }
   flex: 1;
   min-height: 120px;
   overflow-y: auto;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
-  padding: 0 12px;
 }
 .turn { position: relative; padding-block: 12px; }
 .turn + .turn { border-top: 1px solid var(--line); }
@@ -91,12 +87,13 @@ pre {
   font: 0.85rem/1.6 "SFMono-Regular", Consolas, monospace;
   margin: 0;
 }
-.prompt-text { margin-bottom: 10px; border-radius: 6px; background: var(--page); padding: 8px 10px; }
+.prompt-text { margin-bottom: 10px; border-radius: 6px; background: var(--surface); padding: 8px 10px; }
 .reply:empty { display: none; }
 .transcript[aria-busy="true"] .turn:last-child .reply:empty { display: block; }
 .transcript[aria-busy="true"] .turn:last-child .reply:empty::after { content: "…"; color: var(--muted); }
 .turn-note { margin-top: 6px; font-size: 0.8rem; color: var(--muted); overflow-wrap: anywhere; }
-.composer { margin-top: 12px; }
+/* auto keeps the composer at the bottom of the panel while the transcript is hidden. */
+.composer { margin-top: auto; padding-top: 12px; }
 .composer .row { margin-top: 8px; }
 .prompt-limit { margin-top: 6px; font-size: 0.85rem; font-weight: 600; color: var(--error); }
 .visually-hidden {
