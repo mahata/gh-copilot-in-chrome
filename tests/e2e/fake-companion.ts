@@ -96,7 +96,13 @@ function createFakeKeychain(): CredentialStore {
 
     async loadToken() {
       await pause(STEP_DELAY_MS);
-      return existsSync(keychainPath) ? readFileSync(keychainPath, "utf8") : undefined;
+      const token = savedFakeToken();
+      if (token?.includes("LOCKED")) throw new Error("The fake Keychain is locked.");
+      if (token?.includes("VANISH")) {
+        rmSync(keychainPath, { force: true });
+        return undefined;
+      }
+      return token;
     },
 
     async saveToken(token) {
@@ -107,11 +113,16 @@ function createFakeKeychain(): CredentialStore {
 
     async forgetToken() {
       await pause(STEP_DELAY_MS);
-      const tokenWasSaved = existsSync(keychainPath);
+      const token = savedFakeToken();
+      if (token?.includes("NOFORGET")) throw new Error("The fake Keychain refused to delete this PAT.");
       rmSync(keychainPath, { force: true });
-      return tokenWasSaved;
+      return token !== undefined;
     },
   };
+}
+
+function savedFakeToken() {
+  return existsSync(keychainPath) ? readFileSync(keychainPath, "utf8") : undefined;
 }
 
 function crash(): never {

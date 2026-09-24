@@ -3,30 +3,29 @@ import type { BridgeEvent, CompanionBridge, SessionMessage } from "./companion.t
 import {
   BRIDGE_FAILURE_TEXT,
   CONNECT_ERROR_TEXT,
-  connectedStatus,
   CREDENTIAL_ERROR_TEXT,
-  EMPTY_TRANSCRIPT_TEXT,
   failedTurnNote,
   INTERRUPTED_TURN_NOTE,
   MODEL_PLACEHOLDER_TEXT,
   modelOptionLabel,
+  NO_MODELS_TEXT,
   NOT_FINE_GRAINED_PAT,
   promptTooLongText,
-  readyStatus,
   replyAuthorLabel,
   SAVED_TOKEN_REJECTED_TEXT,
   SEND_ERROR_TEXT,
   STATUS_TEXT,
-  usageReport,
+  STOPPED_TURN_NOTE,
 } from "./copy.ts";
 import { pickDefaultModel } from "./models.ts";
 import { createTranscript } from "./transcript.ts";
 import type { TranscriptTurn } from "./transcript.ts";
 import { isFineGrainedPersonalAccessToken, MAX_PROMPT_LENGTH } from "../protocol/messages.ts";
-import type { ModelSummary } from "../protocol/messages.ts";
+import type { ErrorCode, ModelSummary } from "../protocol/messages.ts";
 import "./style.css";
 
 type PanelPhase = "detecting" | "unavailable" | "ready" | "connecting" | "connected" | "sending";
+type PanelView = "none" | "setup" | "chat";
 type SessionError = Extract<SessionMessage, { type: "error" }>;
 
 function element<T extends HTMLElement>(id: string, type: new () => T): T {
@@ -35,41 +34,38 @@ function element<T extends HTMLElement>(id: string, type: new () => T): T {
   return found;
 }
 
-const statusBar = element("status-bar", HTMLDivElement);
+const chatActions = element("chat-actions", HTMLDivElement);
+const newChatButton = element("new-chat", HTMLButtonElement);
+const signOutButton = element("sign-out", HTMLButtonElement);
 const status = element("status", HTMLParagraphElement);
 const errorNotice = element("error", HTMLParagraphElement);
-const checkAgainButton = element("check-again", HTMLButtonElement);
-const savedTokenControls = element("saved-token", HTMLDivElement);
-const connectSavedButton = element("connect-saved", HTMLButtonElement);
-const forgetButton = element("forget", HTMLButtonElement);
+const tryAgainButton = element("try-again", HTMLButtonElement);
 const authForm = element("auth-form", HTMLFormElement);
 const pat = element("pat", HTMLInputElement);
-const remember = element("remember", HTMLInputElement);
 const connectButton = element("connect", HTMLButtonElement);
-const disconnectButton = element("disconnect", HTMLButtonElement);
-const newChatButton = element("new-chat", HTMLButtonElement);
-const transcript = createTranscript(element("transcript", HTMLDivElement), EMPTY_TRANSCRIPT_TEXT);
+const chat = element("chat", HTMLElement);
+const transcript = createTranscript(element("transcript", HTMLDivElement));
 const promptForm = element("prompt-form", HTMLFormElement);
-const model = element("model", HTMLSelectElement);
 const promptInput = element("prompt", HTMLTextAreaElement);
 const promptLimit = element("prompt-limit", HTMLParagraphElement);
+const model = element("model", HTMLSelectElement);
 const sendButton = element("send", HTMLButtonElement);
 const stopButton = element("stop", HTMLButtonElement);
 
 let phase: PanelPhase = "detecting";
+// The view outlives the companion, so a crash keeps the conversation on screen until Try again.
+let view: PanelView = "none";
 let bridge: CompanionBridge | undefined;
-let sdkVersion = "";
-let stopRequested = false;
-let savedToken = false;
-let forgetPending = false;
 let connectingWithSavedToken = false;
-let autoConnect = true;
+let signOutPending = false;
+let stopRequested = false;
 let modelsById = new Map<string, ModelSummary>();
 let activeTurn: TranscriptTurn | undefined;
+let focusAfterUpdate: HTMLElement | undefined;
 
 function startCompanion() {
   phase = "detecting";
-  status.textContent = STATUS_TEXT.detecting;
+  status.textContent = STATUS_TEXT.starting;
   const openedBridge = openCompanionBridge({
     connectNative: (hostName) => chrome.runtime.connectNative(hostName),
     readLastError: () => chrome.runtime.lastError?.message,
@@ -79,6 +75,14 @@ function startCompanion() {
   });
   bridge = openedBridge;
   updateControls();
+}
+
+function restartCompanion() {
+  bridge?.close();
+  bridge = undefined;
+  discardCompanionState();
+  hideError();
+  startCompanion();
 }
 
 function resetPanel() {
@@ -92,33 +96,41 @@ function resetPanel() {
 }
 
 function discardCompanionState() {
-  stopRequested = false;
-  savedToken = false;
-  forgetPending = false;
   connectingWithSavedToken = false;
+  signOutPending = false;
+  stopRequested = false;
   activeTurn = undefined;
   showModelPlaceholder(MODEL_PLACEHOLDER_TEXT.disconnected);
 }
 
+function finishSignOut() {
+  resetPanel();
+  view = "setup";
+  startCompanion();
+}
+
 function connectWithSavedToken() {
-  hideError();
   if (bridge?.send({ type: "connect_saved" })) startConnecting({ withSavedToken: true });
 }
 
 function startConnecting({ withSavedToken }: { withSavedToken: boolean }) {
   phase = "connecting";
   connectingWithSavedToken = withSavedToken;
-  status.textContent = withSavedToken ? STATUS_TEXT.connectingWithSavedToken : STATUS_TEXT.connecting;
+  status.textContent = STATUS_TEXT.connecting;
 }
 
 function handleBridgeEvent(event: BridgeEvent) {
   switch (event.type) {
     case "ready":
-      sdkVersion = event.sdkVersion;
-      savedToken = event.savedToken;
       phase = "ready";
-      status.textContent = readyStatus(sdkVersion);
-      if (savedToken && autoConnect) connectWithSavedToken();
+      status.textContent = "";
+      if (event.savedToken) {
+        view = "chat";
+        connectWithSavedToken();
+      } else {
+        view = "setup";
+        focusAfterUpdate = pat;
+      }
       break;
     case "message":
       handleSessionMessage(event.message);
@@ -128,11 +140,14 @@ function handleBridgeEvent(event: BridgeEvent) {
       phase = "unavailable";
       finishActiveTurn(INTERRUPTED_TURN_NOTE);
       discardCompanionState();
-      status.textContent = STATUS_TEXT.unavailable;
+      status.textContent = "";
       showError(BRIDGE_FAILURE_TEXT[event.failure], event.failure);
+      focusAfterUpdate = tryAgainButton;
       break;
   }
   updateControls();
+  focusAfterUpdate?.focus();
+  focusAfterUpdate = undefined;
 }
 
 function handleSessionMessage(message: SessionMessage) {
@@ -140,29 +155,31 @@ function handleSessionMessage(message: SessionMessage) {
     case "connected":
       if (phase !== "connecting") return;
       phase = "connected";
+      view = "chat";
       transcript.clear();
-      if (message.models.length > 0) showModels(message.models);
-      else showModelPlaceholder(MODEL_PLACEHOLDER_TEXT.none);
-      status.textContent = connectedStatus(message.login, message.models.length);
+      if (message.models.length > 0) {
+        showModels(message.models);
+        status.textContent = "";
+        focusAfterUpdate = promptInput;
+      } else {
+        showModelPlaceholder(MODEL_PLACEHOLDER_TEXT.none);
+        status.textContent = NO_MODELS_TEXT;
+        focusAfterUpdate = tryAgainButton;
+      }
       return;
     case "credential":
-      savedToken = message.saved;
-      if (!message.saved) forgetPending = false;
+      if (!message.saved && signOutPending) finishSignOut();
       return;
     case "delta":
       activeTurn?.appendReply(message.text);
       return;
     case "usage":
-      activeTurn?.showUsage(usageReport(message.model, message.cost));
       return;
-    case "done": {
+    case "done":
       if (phase !== "sending") return;
       phase = "connected";
-      const stopped = message.outcome === "stopped";
-      finishActiveTurn(stopped ? STATUS_TEXT.stopped : undefined);
-      status.textContent = stopped ? STATUS_TEXT.stopped : STATUS_TEXT.complete;
+      finishActiveTurn(message.outcome === "stopped" ? STOPPED_TURN_NOTE : undefined);
       return;
-    }
     case "error":
       return handleSessionError(message);
   }
@@ -170,31 +187,45 @@ function handleSessionMessage(message: SessionMessage) {
 
 function handleSessionError(message: SessionError) {
   switch (message.stage) {
-    case "connect": {
-      if (phase === "connecting") {
-        phase = "ready";
-        status.textContent = readyStatus(sdkVersion);
-      }
-      if (message.code === "no_saved_token") savedToken = false;
-      const savedTokenRejected = message.code === "auth_failed" && connectingWithSavedToken;
-      return showError(savedTokenRejected ? SAVED_TOKEN_REJECTED_TEXT : CONNECT_ERROR_TEXT[message.code], message.code);
-    }
+    case "connect":
+      return handleConnectError(message.code);
     case "send":
       if (phase === "sending") {
         phase = "connected";
         finishActiveTurn(failedTurnNote(message.code));
-        status.textContent = STATUS_TEXT.sendFailed;
       }
       return showError(SEND_ERROR_TEXT[message.code], message.code);
     case "credential":
-      if (message.code === "forget_failed") forgetPending = false;
+      if (message.code === "forget_failed") {
+        signOutPending = false;
+        // Sign out lost focus when it disabled itself; take focus back only if the user has not moved on.
+        if (document.activeElement === document.body) focusAfterUpdate = signOutButton;
+      }
       return showError(CREDENTIAL_ERROR_TEXT[message.code], message.code);
   }
+}
+
+function handleConnectError(code: ErrorCode<"connect">) {
+  const savedTokenUnusable = connectingWithSavedToken && (code === "auth_failed" || code === "no_saved_token");
+  if (phase === "connecting") {
+    phase = "ready";
+    status.textContent = "";
+    // A saved PAT that failed for another reason is still saved, so the chat view stays and offers Try again.
+    if (!connectingWithSavedToken || savedTokenUnusable) {
+      view = "setup";
+      focusAfterUpdate = pat;
+    } else {
+      focusAfterUpdate = tryAgainButton;
+    }
+  }
+  const savedTokenRejected = connectingWithSavedToken && code === "auth_failed";
+  showError(savedTokenRejected ? SAVED_TOKEN_REJECTED_TEXT : CONNECT_ERROR_TEXT[code], code);
 }
 
 function finishActiveTurn(note?: string) {
   activeTurn?.finish(note);
   activeTurn = undefined;
+  if (document.activeElement === stopButton) focusAfterUpdate = promptInput;
 }
 
 function showModels(models: readonly ModelSummary[]) {
@@ -221,27 +252,30 @@ function hideError() {
 }
 
 function updateControls() {
+  const companionReady = phase !== "detecting" && phase !== "unavailable";
   const ready = phase === "ready";
   const connected = phase === "connected";
   const sending = phase === "sending";
   const hasModels = modelsById.size > 0;
   const promptLength = promptInput.value.length;
   const promptTooLong = promptLength > MAX_PROMPT_LENGTH;
+  authForm.hidden = view !== "setup";
+  chatActions.hidden = view !== "chat";
+  chat.hidden = view !== "chat";
   pat.disabled = !ready;
-  remember.disabled = !ready;
   connectButton.disabled = !ready || pat.value.trim() === "";
-  disconnectButton.hidden = !(phase === "connecting" || connected || sending);
-  savedTokenControls.hidden = !savedToken;
-  connectSavedButton.disabled = !ready;
-  forgetButton.disabled = forgetPending;
-  newChatButton.disabled = !connected || !transcript.hasTurns();
+  newChatButton.hidden = !transcript.hasTurns();
+  newChatButton.disabled = !connected;
+  signOutButton.disabled = !companionReady || signOutPending;
   model.disabled = !connected || !hasModels;
   promptInput.disabled = !(connected || sending) || !hasModels;
   promptLimit.textContent = promptTooLong ? promptTooLongText(promptLength) : "";
   promptLimit.hidden = !promptTooLong;
+  sendButton.hidden = sending;
   sendButton.disabled = !connected || !modelsById.has(model.value) || promptInput.value.trim() === "" || promptTooLong;
+  stopButton.hidden = !sending;
   stopButton.disabled = !sending || stopRequested;
-  checkAgainButton.hidden = phase !== "unavailable";
+  tryAgainButton.hidden = !(phase === "unavailable" || (ready && view === "chat") || (connected && !hasModels));
 }
 
 authForm.addEventListener("submit", (event) => {
@@ -252,29 +286,18 @@ authForm.addEventListener("submit", (event) => {
   hideError();
   if (!isFineGrainedPersonalAccessToken(token)) {
     showError(NOT_FINE_GRAINED_PAT.text, NOT_FINE_GRAINED_PAT.code);
-  } else if (bridge?.send({ type: "connect", token, remember: remember.checked })) {
+    pat.focus();
+  } else if (bridge?.send({ type: "connect", token, remember: true })) {
     startConnecting({ withSavedToken: false });
   }
   updateControls();
 });
 
-connectSavedButton.addEventListener("click", () => {
-  if (connectSavedButton.disabled) return;
-  connectWithSavedToken();
-  updateControls();
-});
-
-forgetButton.addEventListener("click", () => {
-  if (forgetButton.disabled) return;
+signOutButton.addEventListener("click", () => {
+  if (signOutButton.disabled) return;
   hideError();
-  if (bridge?.send({ type: "forget" })) forgetPending = true;
+  if (bridge?.send({ type: "forget" })) signOutPending = true;
   updateControls();
-});
-
-disconnectButton.addEventListener("click", () => {
-  autoConnect = false;
-  resetPanel();
-  startCompanion();
 });
 
 promptForm.addEventListener("submit", (event) => {
@@ -288,7 +311,6 @@ promptForm.addEventListener("submit", (event) => {
     stopRequested = false;
     promptInput.value = "";
     activeTurn = transcript.startTurn(prompt, replyAuthorLabel(chosenModel.name));
-    status.textContent = STATUS_TEXT.sending;
   }
   updateControls();
   promptInput.focus();
@@ -302,36 +324,26 @@ promptInput.addEventListener("keydown", (event) => {
 
 stopButton.addEventListener("click", () => {
   if (stopButton.disabled) return;
-  if (bridge?.send({ type: "stop" })) {
-    stopRequested = true;
-    status.textContent = STATUS_TEXT.stopping;
-  }
+  if (bridge?.send({ type: "stop" })) stopRequested = true;
   updateControls();
+  promptInput.focus();
 });
 
 newChatButton.addEventListener("click", () => {
   if (newChatButton.disabled) return;
   hideError();
-  if (bridge?.send({ type: "new_chat" })) {
-    transcript.clear();
-    status.textContent = STATUS_TEXT.newChat;
-  }
+  if (bridge?.send({ type: "new_chat" })) transcript.clear();
   updateControls();
   promptInput.focus();
 });
 
-checkAgainButton.addEventListener("click", () => {
-  hideError();
-  autoConnect = true;
-  startCompanion();
+tryAgainButton.addEventListener("click", () => {
+  if (!tryAgainButton.hidden) restartCompanion();
 });
 
 pat.addEventListener("input", updateControls);
 promptInput.addEventListener("input", updateControls);
 window.addEventListener("pagehide", resetPanel);
-new ResizeObserver(() => {
-  document.documentElement.style.setProperty("--status-bar-height", `${statusBar.offsetHeight}px`);
-}).observe(statusBar);
 
 resetPanel();
 startCompanion();
