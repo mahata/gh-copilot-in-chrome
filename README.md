@@ -64,8 +64,9 @@ pnpm companion:install
 In Chrome, open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**,
 and select this checkout's `dist/` directory. The manifest's `key` pins the extension ID
 to `hdmfkhdfamhcfglofebjnoepkbbbihkg`, and the companion accepts only that ID. Open the
-extension from the toolbar. It should ask for a fine-grained PAT. If it shows an error
-instead, the error names the fix.
+extension from the toolbar, or press Ctrl+Shift+H on Windows/Linux or ⌘+Shift+H on
+macOS. It should ask for a fine-grained PAT. If it shows an error instead, the error
+names the fix.
 
 `pnpm companion:install` writes two files:
 
@@ -80,6 +81,8 @@ then remove the extension in `chrome://extensions`.
 
 ## Use
 
+- **Open:** click the toolbar icon, or press Ctrl+Shift+H on Windows/Linux or ⌘+Shift+H
+  on macOS. Change the shortcut from `chrome://extensions/shortcuts`.
 - **Sign in:** the first time, the panel shows only a PAT field. Paste a fine-grained PAT
   and choose **Connect**. Once GitHub accepts it, the companion saves it in your macOS
   login keychain, and from then on the panel opens straight into the chat. **Sign out**
@@ -98,13 +101,13 @@ then remove the extension in `chrome://extensions`.
 - **Pages:** tick **Include this page** before sending to have Copilot read the tab you are
   viewing. The panel reads the page's title, URL, visible text and any text you selected,
   and sends them with that one prompt. The box clears after each send. Chrome lets the
-  extension read a tab only after you click the toolbar icon while that tab is open, and
-  only until the tab closes or navigates to a different site (origin). Pages on the same
-  origin stay readable after a navigation. If the panel cannot read the tab, it sends nothing
-  and says why:
-  - `page_access_needed`: Chrome has not granted this tab. Click the toolbar icon on it and
-    send again. `file://` pages also need **Allow access to file URLs** in
-    `chrome://extensions`.
+  extension read a tab only after you open it from the toolbar or shortcut while that tab
+  is open, and only until the tab closes or navigates to a different site (origin). Pages
+  on the same origin stay readable after a navigation. If the panel cannot read the tab,
+  it sends nothing and says why:
+  - `page_access_needed`: Chrome has not granted this tab. Open the extension from the
+    toolbar or shortcut on it and send again. `file://` pages also need **Allow access to
+    file URLs** in `chrome://extensions`.
   - `page_restricted`: Chrome never allows reading `chrome://` pages, the New Tab page, the
     Chrome Web Store, other extensions or sites blocked by policy.
   - `page_error_page`: the tab shows an error page. Reload it.
@@ -186,9 +189,9 @@ The extension:
 
 - Requests only `sidePanel`, `nativeMessaging`, `activeTab` and `scripting`. It has no host
   permissions and no content scripts. `activeTab` gives it access only to a tab where you
-  clicked its toolbar icon, until that tab closes or navigates to another origin
-  (same-origin navigation keeps it), and Chrome shows no
-  install-time warning for it.
+  invoked the extension from the toolbar or shortcut, until that tab closes or navigates
+  to another origin (same-origin navigation keeps it), and Chrome shows no install-time
+  warning for it.
 - Runs a script in a tab only when you send a prompt with **Include this page** ticked. The
   script runs in the tab's top frame, reads `document.title`, `location.href`, the body's
   `innerText` and the current selection, and returns them. It does not read form values,
