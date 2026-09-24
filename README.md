@@ -158,8 +158,8 @@ The extension:
   scripts and no access to pages.
 - Sends the companion a PAT only if it starts with `github_pat_`, and clears the field on
   submission. It stores only the last selected model identifier for each GitHub account in
-  extension-local browser storage; the account token, available models and conversation
-  live only in the panel's memory.
+  extension-local browser storage. The companion stores accepted PATs in the macOS login
+  keychain; available models and the conversation live only in the panel's memory.
 - Sends only the prompts you submit, exactly as typed, and refuses any over 32,768
   characters. It attaches no page content, selection or files.
 - Renders prompts and responses as text, never as HTML. Errors show fixed text and a code,

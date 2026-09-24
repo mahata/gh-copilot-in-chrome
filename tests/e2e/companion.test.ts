@@ -388,11 +388,13 @@ test("saves an accepted PAT in the Keychain and opens straight into the chat nex
 });
 
 test("restores the model previously selected for the signed-in account", async () => {
-  const { page, openAnotherPanel } = await openPanel();
+  const { page, openAnotherPanel, savedToken, runningCompanions } = await openPanel();
   await connect(page);
   await page.getByLabel("Model", { exact: true }).selectOption("fake-slow");
 
   await page.close();
+  await expect.poll(savedToken).toBe(approvedToken);
+  await expect.poll(runningCompanions).toEqual([]);
   const reopened = await openAnotherPanel();
   await expect(reopened.getByLabel("Model", { exact: true })).toHaveValue("fake-slow");
 });
