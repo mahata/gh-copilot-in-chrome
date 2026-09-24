@@ -17,7 +17,7 @@ import {
   STATUS_TEXT,
   STOPPED_TURN_NOTE,
 } from "./copy.ts";
-import { pickDefaultModel } from "./models.ts";
+import { pickModel, savedModelKey } from "./models.ts";
 import { createTranscript } from "./transcript.ts";
 import type { TranscriptTurn } from "./transcript.ts";
 import { isFineGrainedPersonalAccessToken, MAX_PROMPT_LENGTH } from "../protocol/messages.ts";
@@ -61,6 +61,7 @@ let unsavedToken = false;
 let signOutPending = false;
 let stopRequested = false;
 let modelsById = new Map<string, ModelSummary>();
+let activeLogin: string | undefined;
 let activeTurn: TranscriptTurn | undefined;
 let focusAfterUpdate: HTMLElement | undefined;
 
@@ -101,6 +102,7 @@ function discardCompanionState() {
   unsavedToken = false;
   signOutPending = false;
   stopRequested = false;
+  activeLogin = undefined;
   activeTurn = undefined;
   showModelPlaceholder(MODEL_PLACEHOLDER_TEXT.disconnected);
 }
@@ -161,7 +163,8 @@ function handleSessionMessage(message: SessionMessage) {
       transcript.clear();
       unsavedToken = !connectingWithSavedToken;
       if (message.models.length > 0) {
-        showModels(message.models);
+        activeLogin = message.login;
+        showModels(message.models, activeLogin && (localStorage.getItem(savedModelKey(activeLogin)) ?? undefined));
         status.textContent = "";
         focusAfterUpdate = promptInput;
       } else {
@@ -236,11 +239,11 @@ function finishActiveTurn(note?: string) {
   if (document.activeElement === stopButton) focusAfterUpdate = promptInput;
 }
 
-function showModels(models: readonly ModelSummary[]) {
+function showModels(models: readonly ModelSummary[], preferredId?: string) {
   modelsById = new Map(models.map((summary) => [summary.id, summary]));
-  const defaultModel = pickDefaultModel(models);
+  const selectedModel = pickModel(models, preferredId);
   model.replaceChildren(
-    ...models.map((summary) => new Option(modelOptionLabel(summary), summary.id, false, summary === defaultModel)),
+    ...models.map((summary) => new Option(modelOptionLabel(summary), summary.id, false, summary === selectedModel)),
   );
 }
 
@@ -358,6 +361,9 @@ tryAgainButton.addEventListener("click", () => {
 
 pat.addEventListener("input", updateControls);
 promptInput.addEventListener("input", updateControls);
+model.addEventListener("change", () => {
+  if (activeLogin !== undefined && modelsById.has(model.value)) localStorage.setItem(savedModelKey(activeLogin), model.value);
+});
 window.addEventListener("pagehide", resetPanel);
 
 resetPanel();
