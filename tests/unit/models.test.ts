@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pickDefaultModel } from "../../src/sidepanel/models.ts";
+import { pickDefaultModel, pickModel, savedModelKey } from "../../src/sidepanel/models.ts";
 
 const gpt5Mini = { id: "gpt-5-mini", name: "GPT-5 mini", multiplier: 0 };
 const gpt41 = { id: "gpt-4.1", name: "GPT-4.1", multiplier: 0 };
@@ -27,5 +27,20 @@ describe("default model", () => {
 
   it("picks nothing from an empty list", () => {
     expect(pickDefaultModel([])).toBeUndefined();
+  });
+});
+
+describe("remembered model", () => {
+  it("restores an available saved model before using the default", () => {
+    expect(pickModel([sonnet, gpt5Mini], sonnet.id)).toBe(sonnet);
+  });
+
+  it("falls back to the default when the saved model is unavailable", () => {
+    expect(pickModel([sonnet, gpt5Mini], "retired-model")).toBe(gpt5Mini);
+  });
+
+  it("uses a distinct storage key for each login", () => {
+    expect(savedModelKey("octocat")).toBe("model:octocat");
+    expect(savedModelKey("hubot")).toBe("model:hubot");
   });
 });

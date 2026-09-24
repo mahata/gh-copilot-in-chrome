@@ -81,9 +81,10 @@ then remove the extension in `chrome://extensions`.
   login keychain, and from then on the panel opens straight into the chat. **Sign out**
   deletes the saved PAT and asks for a new one.
 - **Chat:** write a prompt of up to 32,768 characters and choose **Send**, or press
-  ⌘ Enter or Ctrl Enter. Enter starts a new line. The menu next to **Send** preselects the
-  model with the lowest billing multiplier, and each option ends with the multiplier the
-  SDK reported, such as "(1×)".
+  ⌘ Enter or Ctrl Enter. Enter starts a new line. The menu next to **Send** restores the
+  model you last selected for that GitHub account when it remains available; otherwise, it
+  preselects the model with the lowest billing multiplier. Each option ends with the
+  multiplier the SDK reported, such as "(1×)".
 - **Replies:** they stream in as plain text, and the conversation follows them while you
   are scrolled to its end. While a reply streams, **Stop** replaces **Send**. It ends the
   reply early and keeps what arrived. You can draft the next prompt meanwhile.
@@ -156,8 +157,9 @@ The extension:
 - Requests only `sidePanel` and `nativeMessaging`. It has no host permissions, no content
   scripts and no access to pages.
 - Sends the companion a PAT only if it starts with `github_pat_`, and clears the field on
-  submission. It stores nothing in Chrome, so models and the conversation live only in the
-  panel's memory.
+  submission. It stores only the last selected model identifier for each GitHub account in
+  extension-local browser storage; the account token, available models and conversation
+  live only in the panel's memory.
 - Sends only the prompts you submit, exactly as typed, and refuses any over 32,768
   characters. It attaches no page content, selection or files.
 - Renders prompts and responses as text, never as HTML. Errors show fixed text and a code,

@@ -11,6 +11,14 @@ export function pickDefaultModel(models: readonly ModelSummary[]): ModelSummary 
   return cheapest ?? models[0];
 }
 
+export function pickModel(models: readonly ModelSummary[], preferredId?: string): ModelSummary | undefined {
+  return models.find((model) => model.id === preferredId) ?? pickDefaultModel(models);
+}
+
+export function savedModelKey(login: string) {
+  return `model:${login}`;
+}
+
 function isPriced(model: ModelSummary): model is PricedModel {
   return model.multiplier !== undefined;
 }
