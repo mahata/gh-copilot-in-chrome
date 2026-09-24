@@ -578,9 +578,11 @@ test("swaps Send for Stop while a reply streams, marks a stopped reply incomplet
   const sendButton = button(page, "Send");
   const stopButton = button(page, "Stop");
   await expect(stopButton).toBeHidden();
+  await expect(conversation).toBeHidden();
   await sendPrompt(page, "Take your time.");
   await expect(conversation.locator(".reply")).toHaveText("Partial reply");
   await expect(conversation).toHaveAttribute("aria-busy", "true");
+  await expect(conversation).toBeVisible();
   await expect(sendButton).toBeHidden();
   await expect(stopButton).toBeEnabled();
   await expect(page.getByLabel("Model", { exact: true })).toBeDisabled();
