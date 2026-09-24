@@ -437,6 +437,16 @@ describe("send", () => {
     ]);
   });
 
+  it("puts an attached page ahead of the typed prompt", async () => {
+    const { service, gateway } = await startConnected();
+    const page = { url: "https://example.com/", title: "Example", text: "Body text", truncated: false };
+    service.handle({ type: "send", model: "gpt-5-mini", prompt, page });
+    const sent = itemAt(gateway.turns, 0).request.prompt;
+    expect(sent).toContain("URL: https://example.com/\nTitle: Example");
+    expect(sent).toContain("Body text");
+    expect(sent.endsWith(`User's message:\n${prompt}`)).toBe(true);
+  });
+
   it("accepts another send after a turn finishes", async () => {
     const { service, gateway } = await startConnected();
     service.handle({ type: "send", model: "gpt-5-mini", prompt });

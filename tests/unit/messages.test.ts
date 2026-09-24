@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_OUTPUT_LENGTH,
+  MAX_PAGE_SELECTION_LENGTH,
+  MAX_PAGE_TEXT_LENGTH,
+  MAX_PAGE_TITLE_LENGTH,
+  MAX_PAGE_URL_LENGTH,
   MAX_PROMPT_LENGTH,
   PROTOCOL_VERSION,
   isFineGrainedPersonalAccessToken,
@@ -40,6 +44,38 @@ describe("panel to companion messages", () => {
     { type: "forget" },
   ])("accepts %j", (message) => {
     expect(parsePanelMessage(message)).toEqual(message);
+  });
+
+  it.each([
+    { url: "https://example.com/", title: "Example", text: "Body", truncated: false },
+    { url: "https://example.com/", title: "", text: "", truncated: false },
+    { url: "https://example.com/", title: "Example", text: "Body", selection: "Bo", truncated: true },
+    {
+      url: "u".repeat(MAX_PAGE_URL_LENGTH),
+      title: "t".repeat(MAX_PAGE_TITLE_LENGTH),
+      text: "x".repeat(MAX_PAGE_TEXT_LENGTH),
+      selection: "s".repeat(MAX_PAGE_SELECTION_LENGTH),
+      truncated: true,
+    },
+  ])("accepts a send with page %#", (page) => {
+    const message = { type: "send", model: "gpt-5-mini", prompt: "Summarize", page };
+    expect(parsePanelMessage(message)).toEqual(message);
+  });
+
+  const page = { url: "https://example.com/", title: "Example", text: "Body", truncated: false };
+  it.each([
+    ["a non-object page", "https://example.com/"],
+    ["an empty URL", { ...page, url: "" }],
+    ["an oversized URL", { ...page, url: "u".repeat(MAX_PAGE_URL_LENGTH + 1) }],
+    ["an oversized title", { ...page, title: "t".repeat(MAX_PAGE_TITLE_LENGTH + 1) }],
+    ["an oversized text", { ...page, text: "x".repeat(MAX_PAGE_TEXT_LENGTH + 1) }],
+    ["an empty selection", { ...page, selection: "" }],
+    ["an oversized selection", { ...page, selection: "s".repeat(MAX_PAGE_SELECTION_LENGTH + 1) }],
+    ["a missing truncated flag", { url: page.url, title: page.title, text: page.text }],
+    ["a non-string text", { ...page, text: 5 }],
+    ["an extra page field", { ...page, html: "<p>Body</p>" }],
+  ])("rejects a send with %s", (_description, value) => {
+    expect(parsePanelMessage({ type: "send", model: "gpt-5-mini", prompt: "Summarize", page: value })).toBeUndefined();
   });
 
   it("accepts a prompt at the length limit", () => {

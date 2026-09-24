@@ -2,7 +2,8 @@ import { CONNECT_FAILURE_CODES, GatewayFailure, TURN_FAILURE_CODES } from "./gat
 import type { ConnectFailureCode, CopilotGateway, Turn, TurnEvent, TurnFailureCode } from "./gateway.ts";
 import type { CredentialStore } from "./keychain.ts";
 import { CONNECT_TIMEOUT_MS, MAX_OUTPUT_LENGTH, TURN_TIMEOUT_MS } from "../protocol/messages.ts";
-import type { CompanionMessage, ErrorCode, PanelMessage } from "../protocol/messages.ts";
+import type { CompanionMessage, ErrorCode, PageContext, PanelMessage } from "../protocol/messages.ts";
+import { composePrompt } from "./page-prompt.ts";
 
 export const ABORT_TIMEOUT_MS = 5_000;
 
@@ -135,7 +136,7 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
     });
   }
 
-  function send(model: string, prompt: string) {
+  function send(model: string, prompt: string, page?: PageContext) {
     if (state.phase === "ready") return emit(sendError("not_connected"));
     if (state.phase !== "connected") return emit(sendError("busy"));
     if (!state.modelIds.has(model)) return emit(sendError("unknown_model"));
@@ -145,7 +146,7 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
     try {
       const turn = gateway.startTurn({
         model,
-        prompt,
+        prompt: composePrompt(prompt, page),
         onEvent: (event) => forwardTurnEvent(sending, event),
       });
       sending = { phase: "sending", gateway, modelIds, turn, outputLength: 0, stopRequested: false };
@@ -243,7 +244,7 @@ export function createCompanionService({ createGateway, store, emit, onRuntimeSt
         case "connect_saved":
           return connectWithSavedToken();
         case "send":
-          return send(message.model, message.prompt);
+          return send(message.model, message.prompt, message.page);
         case "stop":
           return stop();
         case "new_chat":

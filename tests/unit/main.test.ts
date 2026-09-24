@@ -56,7 +56,7 @@ describe("companion entry point", { timeout: 15_000 }, () => {
   it("greets Chrome with the installed SDK version and no saved PAT in an empty home, then exits when its input ends", async () => {
     const { child, frames, exitCode } = launchCompanion([EXTENSION_ORIGIN]);
     await vi.waitFor(
-      () => expect(frames).toEqual([{ type: "hello", protocolVersion: 2, sdkVersion: installedSdkVersion, savedToken: false }]),
+      () => expect(frames).toEqual([{ type: "hello", protocolVersion: 3, sdkVersion: installedSdkVersion, savedToken: false }]),
       startupTimeout,
     );
     child.stdin.end();
