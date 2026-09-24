@@ -16,8 +16,8 @@ describe("side panel copy", () => {
     expect(modelOptionLabel({ id: "gpt-4.1", name: "GPT-4.1", multiplier: 0 })).toBe("GPT-4.1 (0×)");
   });
 
-  it("says when a model's multiplier was not reported", () => {
-    expect(modelOptionLabel({ id: "mystery", name: "Mystery" })).toBe("Mystery (multiplier not reported)");
+  it("shows only the model name when its multiplier is undefined", () => {
+    expect(modelOptionLabel({ id: "mystery", name: "Mystery" })).toBe("Mystery");
   });
 
   it("states the companion limits a request can hit", () => {
