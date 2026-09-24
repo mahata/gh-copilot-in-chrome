@@ -6,7 +6,7 @@ import { createKeychainStore, createSecurityRunner, MAX_SECURITY_OUTPUT_LENGTH }
 import type { SecurityResult, SecurityRunner } from "../../src/companion/keychain.ts";
 
 const token = `github_pat_${"K".repeat(82)}`;
-const itemArguments = ["-s", "io.github.mahata.gh_copilot_in_chrome", "-a", "fine-grained-pat"];
+const itemArguments = ["-s", "io.github.mahata.prompt_harbor", "-a", "fine-grained-pat"];
 const loginKeychain = "login.keychain";
 
 function fakeSecurity(result: Partial<SecurityResult>) {
@@ -62,7 +62,7 @@ describe("keychain credential store", () => {
       await createKeychainStore(runSecurity).saveToken(token);
       expect(runSecurity).toHaveBeenCalledExactlyOnceWith(
         ["-i"],
-        `add-generic-password -U -s io.github.mahata.gh_copilot_in_chrome -a fine-grained-pat -w ${token} ${loginKeychain}\n`,
+        `add-generic-password -U -s io.github.mahata.prompt_harbor -a fine-grained-pat -w ${token} ${loginKeychain}\n`,
       );
     });
 

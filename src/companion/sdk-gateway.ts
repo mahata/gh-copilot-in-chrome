@@ -8,7 +8,7 @@ import { SYSTEM_PATH } from "./system-path.ts";
 import { MAX_MODELS, isBoundedField, isNonNegativeNumber } from "../protocol/messages.ts";
 import type { ModelSummary, TurnOutcome } from "../protocol/messages.ts";
 
-const APPLICATION_NAME = "gh-copilot-in-chrome";
+const APPLICATION_NAME = "prompt-harbor";
 export const GRACEFUL_STOP_TIMEOUT_MS = 5_000;
 
 const TURN_FAILURE_BY_ERROR_TYPE = new Map<string, TurnFailureCode>([

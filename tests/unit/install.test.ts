@@ -44,8 +44,8 @@ afterEach(() => {
 describe("companionInstallPaths", () => {
   it("places the launcher in Application Support and the host manifest where Chrome looks for it", () => {
     expect(companionInstallPaths("/Users/octocat")).toEqual({
-      launcherDirectory: "/Users/octocat/Library/Application Support/gh-copilot-in-chrome",
-      launcherPath: "/Users/octocat/Library/Application Support/gh-copilot-in-chrome/companion",
+      launcherDirectory: "/Users/octocat/Library/Application Support/prompt-harbor",
+      launcherPath: "/Users/octocat/Library/Application Support/prompt-harbor/companion",
       hostManifestPath: `/Users/octocat/Library/Application Support/Google/Chrome/NativeMessagingHosts/${HOST_NAME}.json`,
     });
   });
@@ -68,7 +68,7 @@ describe("runInstaller", () => {
 
     expect(JSON.parse(readFileSync(hostManifestPath, "utf8"))).toEqual({
       name: HOST_NAME,
-      description: "Local Copilot SDK companion for gh-copilot-in-chrome",
+      description: "Local GitHub Copilot SDK companion for Prompt Harbor",
       path: launcherPath,
       type: "stdio",
       allowed_origins: [EXTENSION_ORIGIN],

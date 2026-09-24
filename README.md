@@ -1,15 +1,15 @@
-# gh-copilot-in-chrome
+# Prompt Harbor
 
-A private experiment: a Chrome side panel for chatting with GitHub Copilot through the
-official [Copilot SDK](https://github.com/github/copilot-sdk), which runs in a small
-companion process on your Mac. This project is not affiliated with GitHub.
+Prompt Harbor is an independent, unofficial Chrome side-panel client for chatting with
+GitHub Copilot through the official [Copilot SDK](https://github.com/github/copilot-sdk),
+which runs in a small companion process on your Mac. It is not affiliated with, sponsored
+by or endorsed by GitHub.
 
 **Current status:** the chat panel, the companion, its macOS Keychain storage for your PAT
-and its installer are built and tested against a scripted fake companion. Whether a real
-fine-grained PAT authenticates through the SDK, which models it lists and how usage is
-billed are all **unverified** until you run the [live check](#live-check). So is page access:
-Chromium's source shows it grants `activeTab` for a toolbar click that the extension handles
-itself, but no live click has been checked.
+and its installer are built and tested against a scripted fake companion. A
+[live check](#live-check) with a real fine-grained PAT has also verified authentication,
+model listing and multipliers, usage reporting, page access after a toolbar click,
+denied page access after a cross-origin navigation, authentication failure and sign-out.
 
 ## Why a local companion
 
@@ -70,14 +70,17 @@ names the fix.
 
 `pnpm companion:install` writes two files:
 
-- `~/Library/Application Support/gh-copilot-in-chrome/companion`: a launcher that runs this
+- `~/Library/Application Support/prompt-harbor/companion`: a launcher that runs this
   checkout's `src/companion/main.ts` with the Node.js that ran the installer.
-- `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/io.github.mahata.gh_copilot_in_chrome.json`:
+- `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/io.github.mahata.prompt_harbor.json`:
   registers the launcher with Chrome for this extension only.
 
 Run it again after moving this checkout or changing Node.js. To remove the companion, run
 `pnpm companion:uninstall`, which also deletes any saved PAT from your login keychain,
 then remove the extension in `chrome://extensions`.
+
+Older development builds used different install and Keychain identifiers. Prompt Harbor
+does not migrate or remove those entries.
 
 ## Use
 
@@ -123,9 +126,11 @@ then remove the extension in `chrome://extensions`.
 
 ## Live check
 
-The live check is your first use with a real PAT, and you authorize it yourself. The test
-suite never runs it. Never put a credential in chat, issues, commits, screenshots, logs or
-CI.
+The live check has passed with a real PAT. It covers authentication, model listing and
+multipliers, usage reporting, conversation behavior, page access and denial, persistence,
+and sign-out. Keep it as a manual release check because the test suite never uses a real
+credential or sends live Copilot requests. Never put a credential in chat, issues, commits,
+screenshots, logs or CI.
 
 1. Create a fresh, expiring
    [fine-grained PAT](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/authenticate-copilot-cli)
@@ -138,7 +143,7 @@ CI.
 3. Check that the Keychain item exists. This command prints its attributes but not the PAT:
 
    ```sh
-   security find-generic-password -s io.github.mahata.gh_copilot_in_chrome -a fine-grained-pat login.keychain
+   security find-generic-password -s io.github.mahata.prompt_harbor -a fine-grained-pat login.keychain
    ```
 
 4. Send a short prompt, then a follow-up that depends on the reply. Switch models, send
@@ -217,7 +222,7 @@ The companion:
   list, optionally with a page of at most 4,096 characters of URL, 1,000 of title, 100,000
   of text and 32,768 of selection; stop; start a new chat; and forget the saved PAT.
 - Keeps a saved PAT as a generic password item in your login keychain, with service
-  `io.github.mahata.gh_copilot_in_chrome` and account `fine-grained-pat`:
+  `io.github.mahata.prompt_harbor` and account `fine-grained-pat`:
   - It names the login keychain (`login.keychain`) in every `security` command, so a
     different default keychain or search list does not change where it saves, reads or
     deletes the PAT.
@@ -293,9 +298,9 @@ Accepted risks:
 - While the companion runs, the runtime's session log in its temporary directory holds your
   prompts and replies, but not the token. If the companion is still running a few seconds
   after the panel disconnects, Chrome force-quits it, and that directory
-  (`$TMPDIR/gh-copilot-in-chrome-*`) can then remain. Delete leftovers by hand.
+  (`$TMPDIR/prompt-harbor-*`) can then remain. Delete leftovers by hand.
 - The runtime keeps its default integration ID, `copilot-developer-cli`. The companion only
-  names itself `gh-copilot-in-chrome` in the SDK's `clientInfo`, which labels the runtime's
+  names itself `prompt-harbor` in the SDK's `clientInfo`, which labels the runtime's
   telemetry.
 - The SDK is young (1.0.x), so its options, defaults and events may change, including the
   ones this lockdown relies on. `pnpm install --frozen-lockfile` installs the exact version
