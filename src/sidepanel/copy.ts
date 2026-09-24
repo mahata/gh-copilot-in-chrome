@@ -82,7 +82,7 @@ export const SEND_ERROR_TEXT: Record<ErrorCode<"send">, string> = {
 };
 
 export function modelOptionLabel({ name, multiplier }: ModelSummary) {
-  return `${name} (${multiplier === undefined ? "multiplier not reported" : `${multiplier}×`})`;
+  return multiplier === undefined ? name : `${name} (${multiplier}×)`;
 }
 
 export function replyAuthorLabel(modelName: string) {
