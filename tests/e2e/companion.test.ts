@@ -821,6 +821,12 @@ test("asks only for the side panel, native messaging and on-click page access, a
   expect(new URL(worker.url()).host).toBe(EXTENSION_ID);
   const manifest = await page.evaluate(() => chrome.runtime.getManifest());
   expect(manifest.permissions).toEqual(["sidePanel", "nativeMessaging", "activeTab", "scripting"]);
+  expect(manifest.commands).toEqual({
+    _execute_action: {
+      suggested_key: { default: "Ctrl+Shift+H", mac: "Command+Shift+H" },
+      description: "Open Copilot in Chrome",
+    },
+  });
   expect(manifest.host_permissions).toBeUndefined();
   expect(manifest.optional_permissions).toBeUndefined();
   expect(manifest.content_scripts).toBeUndefined();
