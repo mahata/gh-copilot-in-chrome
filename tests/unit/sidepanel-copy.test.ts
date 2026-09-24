@@ -5,6 +5,8 @@ import {
   CONNECT_ERROR_TEXT,
   CREDENTIAL_ERROR_TEXT,
   modelOptionLabel,
+  PAGE_CAPTURE_ERROR_TEXT,
+  pageCaptureErrorText,
   promptTooLongText,
   SAVED_TOKEN_REJECTED_TEXT,
   SEND_ERROR_TEXT,
@@ -28,6 +30,13 @@ describe("side panel copy", () => {
 
   it("explains a prompt that is too long to send", () => {
     expect(promptTooLongText(40_000)).toBe("This prompt is 40,000 characters. Shorten it to 32,768 or fewer to send.");
+  });
+
+  it("appends Chrome's reason only when it gave one", () => {
+    expect(pageCaptureErrorText("page_restricted")).toBe(PAGE_CAPTURE_ERROR_TEXT.page_restricted);
+    expect(pageCaptureErrorText("page_unreadable", "No tab with id: 7.")).toBe(
+      `${PAGE_CAPTURE_ERROR_TEXT.page_unreadable} Chrome said: No tab with id: 7.`,
+    );
   });
 
   it("tells the user how to start over when the conversation outgrows the model's context window", () => {

@@ -7,8 +7,9 @@ companion process on your Mac. This project is not affiliated with GitHub.
 **Current status:** the chat panel, the companion, its macOS Keychain storage for your PAT
 and its installer are built and tested against a scripted fake companion. Whether a real
 fine-grained PAT authenticates through the SDK, which models it lists and how usage is
-billed are all **unverified** until you run the [live check](#live-check). So is whether
-Chrome grants page access when the toolbar icon opens the panel.
+billed are all **unverified** until you run the [live check](#live-check). So is page access:
+Chromium's source shows it grants `activeTab` for a toolbar click that the extension handles
+itself, but no live click has been checked.
 
 ## Why a local companion
 
@@ -99,8 +100,15 @@ then remove the extension in `chrome://extensions`.
   extension read a tab only after you click the toolbar icon while that tab is open, and
   only until the tab closes or navigates to a different site (origin). Pages on the same
   origin stay readable after a navigation. If the panel cannot read the tab, it sends nothing
-  and says `page_unavailable`: click the toolbar icon on that tab and send again. Chrome
-  never allows reading `chrome://` pages, the Chrome Web Store or other extensions. Up to
+  and says why:
+  - `page_access_needed`: Chrome has not granted this tab. Click the toolbar icon on it and
+    send again. `file://` pages also need **Allow access to file URLs** in
+    `chrome://extensions`.
+  - `page_restricted`: Chrome never allows reading `chrome://` pages, the New Tab page, the
+    Chrome Web Store, other extensions or sites blocked by policy.
+  - `page_error_page`: the tab shows an error page. Reload it.
+  - `page_unreadable`: anything else, with Chrome's own reason when it gave one.
+  - `page_timeout`: the page did not answer within 5 seconds. Up to
   100,000 characters of text and 32,768 of selection are sent, and a note tells Copilot when
   the page was cut short. The page stays in the conversation, so a few large pages can lead
   to `context_limit` sooner.
@@ -138,8 +146,8 @@ CI.
 6. Open an ordinary web page, click the toolbar icon on it, tick **Include this page** and
    ask for a summary. The reply should reflect the page. Then follow a link on that page
    to a different site, tick the box again and send: the panel should report
-   `page_unavailable` and send nothing until you click the toolbar icon again. Record whether clicking the icon while
-   the panel is open grants access, closes the panel, or both.
+   `page_access_needed` and send nothing until you click the toolbar icon again. Clicking
+   the icon while the panel is open should grant access and leave the panel open.
 7. Close the panel and open it again. It should open straight into the chat, connected
    with the saved PAT.
 8. Record any error codes, the Chrome version, the SDK version from

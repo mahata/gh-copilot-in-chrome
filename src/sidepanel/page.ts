@@ -18,9 +18,18 @@ export const PAGE_LIMITS: PageLimits = {
   selection: MAX_PAGE_SELECTION_LENGTH,
 };
 
-export type PageCaptureFailure = "page_unavailable" | "page_timeout";
+export type PageCaptureFailure =
+  | "page_access_needed"
+  | "page_restricted"
+  | "page_error_page"
+  | "page_unreadable"
+  | "page_timeout";
 
-export type PageCaptureResult = { ok: true; page: PageContext } | { ok: false; failure: PageCaptureFailure };
+export type PageCaptureResult =
+  | { ok: true; page: PageContext }
+  | { ok: false; failure: PageCaptureFailure; detail?: string };
+
+const MAX_FAILURE_DETAIL_LENGTH = 300;
 
 export type PageCaptureDeps = {
   activeTabId: () => Promise<number | undefined>;
@@ -64,21 +73,43 @@ export async function readActivePage({
   timeoutMs = PAGE_CAPTURE_TIMEOUT_MS,
 }: PageCaptureDeps): Promise<PageCaptureResult> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = new Promise<"timeout">((resolve) => {
-    timer = setTimeout(() => resolve("timeout"), timeoutMs);
+  const timedOut = new Promise<PageCaptureResult>((resolve) => {
+    timer = setTimeout(() => resolve({ ok: false, failure: "page_timeout" }), timeoutMs);
   });
-  const capture = (async () => {
+  const capture = (async (): Promise<PageCaptureResult> => {
     const tabId = await activeTabId();
-    if (tabId === undefined) return undefined;
-    return parsePageContext(await runInTab(tabId, capturePage, PAGE_LIMITS));
-  })().catch(() => undefined);
+    if (tabId === undefined) return { ok: false, failure: "page_unreadable" };
+    let value: unknown;
+    try {
+      value = await runInTab(tabId, capturePage, PAGE_LIMITS);
+    } catch (error) {
+      return scriptFailure(error);
+    }
+    const page = parsePageContext(value);
+    return page ? { ok: true, page } : { ok: false, failure: "page_unreadable" };
+  })().catch((): PageCaptureResult => ({ ok: false, failure: "page_unreadable" }));
   try {
-    const outcome = await Promise.race([capture, timedOut]);
-    if (outcome === "timeout") return { ok: false, failure: "page_timeout" };
-    return outcome ? { ok: true, page: outcome } : { ok: false, failure: "page_unavailable" };
+    return await Promise.race([capture, timedOut]);
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Chrome reports why it refused only through these messages, which Chromium defines in
+// extensions/common/manifest_constants.h and script_executor.cc.
+function scriptFailure(error: unknown): PageCaptureResult {
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    message.startsWith("Cannot access a chrome:// URL") ||
+    message.startsWith("Cannot access a chrome-extension:// URL") ||
+    message.includes("cannot be scripted")
+  ) {
+    return { ok: false, failure: "page_restricted" };
+  }
+  if (/^Frame with ID \d+ is showing error page/.test(message)) return { ok: false, failure: "page_error_page" };
+  if (message.startsWith("Cannot access contents of ")) return { ok: false, failure: "page_access_needed" };
+  const detail = message.trim().slice(0, MAX_FAILURE_DETAIL_LENGTH);
+  return detail === "" ? { ok: false, failure: "page_unreadable" } : { ok: false, failure: "page_unreadable", detail };
 }
 
 export function chromePageCaptureDeps(): PageCaptureDeps {

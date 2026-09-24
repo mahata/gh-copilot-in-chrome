@@ -806,6 +806,12 @@ test("asks only for the side panel, native messaging and on-click page access, a
   expect(storage).toEqual({ local: [], session: [] });
 });
 
+test("opens the panel from the toolbar click itself, so Chrome grants page access for that tab", async () => {
+  const { page, worker } = await openPanel();
+  expect(await page.evaluate(() => chrome.sidePanel.getPanelBehavior())).toEqual({ openPanelOnActionClick: false });
+  expect(await worker.evaluate(() => chrome.action.onClicked.hasListeners())).toBe(true);
+});
+
 test("includes the page only when asked, and sends nothing when Chrome refuses access to the tab", async () => {
   const { page, networkRequests, receivedPrompts } = await openPanel();
   await connect(page);
@@ -822,7 +828,7 @@ test("includes the page only when asked, and sends nothing when Chrome refuses a
   // The active tab is this extension page, which Chrome never lets an extension script.
   await includePage.check();
   await sendPrompt(page, "With the page.");
-  await expect(page.getByRole("alert")).toContainText("page_unavailable");
+  await expect(page.getByRole("alert")).toContainText("page_access_needed");
   await expect(page.getByRole("alert")).toContainText("toolbar icon");
   await expect(conversation.getByRole("article")).toHaveCount(1);
   await expect(promptField(page)).toHaveValue("With the page.");
