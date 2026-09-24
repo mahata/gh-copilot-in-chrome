@@ -209,6 +209,10 @@ test("asks a new user only for a PAT, then chats with the cheapest model presele
   await expect(conversation).toBeHidden();
   const sendButton = button(page, "Send");
   await expect(sendButton).toBeDisabled();
+  const [modelBox, sendBox] = await Promise.all([modelSelect.boundingBox(), sendButton.boundingBox()]);
+  expect(modelBox).not.toBeNull();
+  expect(sendBox).not.toBeNull();
+  expect(sendBox!.y).toBeGreaterThanOrEqual(modelBox!.y + modelBox!.height);
 
   const prompt = "Explain <b>bold</b> & <i>italic</i> tags.";
   await sendPrompt(page, prompt);
