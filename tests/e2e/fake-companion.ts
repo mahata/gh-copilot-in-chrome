@@ -107,6 +107,7 @@ function createFakeKeychain(): CredentialStore {
 
     async saveToken(token) {
       await pause(STEP_DELAY_MS);
+      if (token.includes("HOLD")) await waitForKeychainRelease();
       if (token.includes("NOSAVE")) throw new Error("The fake Keychain refused to save this PAT.");
       writeFileSync(keychainPath, token);
     },
@@ -114,11 +115,22 @@ function createFakeKeychain(): CredentialStore {
     async forgetToken() {
       await pause(STEP_DELAY_MS);
       const token = savedFakeToken();
+      if (token?.includes("HOLD")) await waitForKeychainRelease();
       if (token?.includes("NOFORGET")) throw new Error("The fake Keychain refused to delete this PAT.");
       rmSync(keychainPath, { force: true });
       return token !== undefined;
     },
   };
+}
+
+async function waitForKeychainRelease() {
+  const releasePath = `${keychainPath}.release`;
+  const deadline = Date.now() + 10_000;
+  while (!existsSync(releasePath)) {
+    if (Date.now() > deadline) throw new Error("The test never released the fake Keychain.");
+    await pause(STEP_DELAY_MS);
+  }
+  rmSync(releasePath);
 }
 
 function savedFakeToken() {

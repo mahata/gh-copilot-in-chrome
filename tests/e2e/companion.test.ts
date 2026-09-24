@@ -13,6 +13,8 @@ const deniedToken = `github_pat_DENIED${"B".repeat(76)}`;
 const crashingToken = `github_pat_CRASH${"C".repeat(77)}`;
 const tokenWithoutModels = `github_pat_NOMODELS${"D".repeat(74)}`;
 const unsavableToken = `github_pat_NOSAVE${"F".repeat(76)}`;
+const unsavableTokenWithoutModels = `github_pat_NOMODELSNOSAVE${"L".repeat(68)}`;
+const heldTokenWithoutModels = `github_pat_NOMODELSHOLD${"K".repeat(70)}`;
 const undeletableToken = `github_pat_NOFORGET${"G".repeat(74)}`;
 const unreadableToken = `github_pat_LOCKED${"H".repeat(76)}`;
 const vanishingToken = `github_pat_VANISH${"J".repeat(76)}`;
@@ -29,6 +31,7 @@ type OpenPanel = {
   openAnotherPanel: () => Promise<Page>;
   savedToken: () => string | undefined;
   saveTokenOutsidePanel: (token: string) => void;
+  releaseHeldKeychainTask: () => void;
 };
 
 type PanelSetup = { withCompanion?: boolean; savedToken?: string };
@@ -94,6 +97,7 @@ async function openPanel({ withCompanion = true, savedToken }: PanelSetup = {}):
     openAnotherPanel,
     savedToken: () => (existsSync(keychainPath) ? readFileSync(keychainPath, "utf8") : undefined),
     saveTokenOutsidePanel: (token) => writeFileSync(keychainPath, token),
+    releaseHeldKeychainTask: () => writeFileSync(`${keychainPath}.release`, ""),
   };
 }
 
@@ -523,13 +527,43 @@ test("says so when the account has no enabled models, and Try again picks up mod
   await expect(button(page, "Send")).toBeDisabled();
   const tryAgainButton = button(page, "Try again");
   await expect(tryAgainButton).toBeFocused();
+  expect(savedToken()).toBe(tokenWithoutModels);
 
-  await expect.poll(savedToken).toBe(tokenWithoutModels);
   saveTokenOutsidePanel(approvedToken);
   await tryAgainButton.click();
   await expect(promptField(page)).toBeFocused();
   await expect(page.getByRole("status")).toBeEmpty();
   await expect(tryAgainButton).toBeHidden();
+});
+
+test("offers Try again only when restarting the companion cannot drop an unsaved PAT or undo Sign out", async () => {
+  const { page, savedToken, releaseHeldKeychainTask } = await openPanel();
+  await connect(page, heldTokenWithoutModels);
+  await expect(page.getByRole("status")).toContainText("no enabled models");
+  const tryAgainButton = button(page, "Try again");
+  await expect(tryAgainButton).toBeHidden();
+  expect(savedToken()).toBeUndefined();
+
+  releaseHeldKeychainTask();
+  await expect(tryAgainButton).toBeFocused();
+  expect(savedToken()).toBe(heldTokenWithoutModels);
+
+  await button(page, "Sign out").click();
+  await expect(tryAgainButton).toBeHidden();
+  releaseHeldKeychainTask();
+  await expect(patField(page)).toBeFocused();
+  expect(savedToken()).toBeUndefined();
+});
+
+test("does not offer Try again when the Keychain refuses to save the PAT of an account with no models", async () => {
+  const { page, savedToken } = await openPanel();
+  await connect(page, unsavableTokenWithoutModels);
+
+  await expect(page.getByRole("alert")).toContainText("save_failed");
+  await expect(page.getByRole("status")).toContainText("no enabled models");
+  await expect(button(page, "Try again")).toBeHidden();
+  await expect(button(page, "Sign out")).toBeEnabled();
+  expect(savedToken()).toBeUndefined();
 });
 
 test("swaps Send for Stop while a reply streams, marks a stopped reply incomplete, and keeps the next prompt drafted", async () => {

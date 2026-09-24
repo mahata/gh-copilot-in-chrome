@@ -57,6 +57,7 @@ let phase: PanelPhase = "detecting";
 let view: PanelView = "none";
 let bridge: CompanionBridge | undefined;
 let connectingWithSavedToken = false;
+let unsavedToken = false;
 let signOutPending = false;
 let stopRequested = false;
 let modelsById = new Map<string, ModelSummary>();
@@ -97,6 +98,7 @@ function resetPanel() {
 
 function discardCompanionState() {
   connectingWithSavedToken = false;
+  unsavedToken = false;
   signOutPending = false;
   stopRequested = false;
   activeTurn = undefined;
@@ -157,6 +159,7 @@ function handleSessionMessage(message: SessionMessage) {
       phase = "connected";
       view = "chat";
       transcript.clear();
+      unsavedToken = !connectingWithSavedToken;
       if (message.models.length > 0) {
         showModels(message.models);
         status.textContent = "";
@@ -164,11 +167,16 @@ function handleSessionMessage(message: SessionMessage) {
       } else {
         showModelPlaceholder(MODEL_PLACEHOLDER_TEXT.none);
         status.textContent = NO_MODELS_TEXT;
-        focusAfterUpdate = tryAgainButton;
+        if (canTryAgain()) focusAfterUpdate = tryAgainButton;
       }
       return;
     case "credential":
-      if (!message.saved && signOutPending) finishSignOut();
+      if (!message.saved) {
+        if (signOutPending) finishSignOut();
+        return;
+      }
+      unsavedToken = false;
+      if (canTryAgain() && document.activeElement === document.body) focusAfterUpdate = tryAgainButton;
       return;
     case "delta":
       activeTurn?.appendReply(message.text);
@@ -214,7 +222,7 @@ function handleConnectError(code: ErrorCode<"connect">) {
     if (!connectingWithSavedToken || savedTokenUnusable) {
       view = "setup";
       focusAfterUpdate = pat;
-    } else {
+    } else if (canTryAgain()) {
       focusAfterUpdate = tryAgainButton;
     }
   }
@@ -251,6 +259,13 @@ function hideError() {
   errorNotice.textContent = "";
 }
 
+function canTryAgain() {
+  const retryable =
+    phase === "unavailable" || (phase === "ready" && view === "chat") || (phase === "connected" && modelsById.size === 0);
+  // Try again restarts the companion, which would drop a PAT that is not saved yet or race a pending sign-out.
+  return retryable && !unsavedToken && !signOutPending;
+}
+
 function updateControls() {
   const companionReady = phase !== "detecting" && phase !== "unavailable";
   const ready = phase === "ready";
@@ -275,7 +290,7 @@ function updateControls() {
   sendButton.disabled = !connected || !modelsById.has(model.value) || promptInput.value.trim() === "" || promptTooLong;
   stopButton.hidden = !sending;
   stopButton.disabled = !sending || stopRequested;
-  tryAgainButton.hidden = !(phase === "unavailable" || (ready && view === "chat") || (connected && !hasModels));
+  tryAgainButton.hidden = !canTryAgain();
 }
 
 authForm.addEventListener("submit", (event) => {
