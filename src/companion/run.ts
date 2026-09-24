@@ -9,7 +9,7 @@ import type { CompanionMessage, ErrorCode } from "../protocol/messages.ts";
 
 const CLEAN_EXIT = 0;
 const FAILED_EXIT = 1;
-const REFUSAL_NOTICE = "This companion only runs when Chrome starts it for the gh-copilot-in-chrome extension.\n";
+const REFUSAL_NOTICE = "This companion only runs when Chrome starts it for the Prompt Harbor extension.\n";
 
 export type RunCompanionOptions = {
   stdin: Readable;

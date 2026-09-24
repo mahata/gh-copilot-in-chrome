@@ -159,7 +159,7 @@ describe("connect", () => {
       gitHubToken: token,
       useLoggedInUser: false,
       logLevel: "error",
-      clientInfo: { applicationName: "gh-copilot-in-chrome" },
+      clientInfo: { applicationName: "prompt-harbor" },
     });
     expect(home.startsWith(tmpdir())).toBe(true);
     expect(statSync(home).mode & 0o777).toBe(0o700);

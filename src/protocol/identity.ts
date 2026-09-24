@@ -1,4 +1,4 @@
-export const HOST_NAME = "io.github.mahata.gh_copilot_in_chrome";
+export const HOST_NAME = "io.github.mahata.prompt_harbor";
 
 export const EXTENSION_ID = "hdmfkhdfamhcfglofebjnoepkbbbihkg";
 

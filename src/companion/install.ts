@@ -24,7 +24,7 @@ type CompanionInstallPaths = ReturnType<typeof companionInstallPaths>;
 
 export function companionInstallPaths(home: string) {
   const applicationSupport = join(home, "Library", "Application Support");
-  const launcherDirectory = join(applicationSupport, "gh-copilot-in-chrome");
+  const launcherDirectory = join(applicationSupport, "prompt-harbor");
   return {
     launcherDirectory,
     launcherPath: join(launcherDirectory, "companion"),
@@ -40,7 +40,7 @@ export async function runInstaller({ args, platform, home, nodePath, companionEn
   const paths = companionInstallPaths(home);
   if (args.length === 0) {
     await install(paths, nodePath, companionEntryPath);
-    output.log("Installed the gh-copilot-in-chrome companion.");
+    output.log("Installed the Prompt Harbor companion.");
     output.log(`  Launcher: ${paths.launcherPath}`);
     output.log(`  Chrome host manifest: ${paths.hostManifestPath}`);
     output.log("Reopen the extension's side panel to use it. Install again after moving this checkout or changing Node.js.");
@@ -48,7 +48,7 @@ export async function runInstaller({ args, platform, home, nodePath, companionEn
   }
   if (args.length === 1 && args[0] === UNINSTALL_FLAG) {
     await uninstall(paths);
-    output.log("Removed the gh-copilot-in-chrome companion.");
+    output.log("Removed the Prompt Harbor companion.");
     return forgetSavedToken(store, output);
   }
   output.error("Usage: pnpm companion:install | pnpm companion:uninstall");
@@ -62,7 +62,7 @@ async function install({ launcherDirectory, launcherPath, hostManifestPath }: Co
 
   const hostManifest = {
     name: HOST_NAME,
-    description: "Local Copilot SDK companion for gh-copilot-in-chrome",
+    description: "Local GitHub Copilot SDK companion for Prompt Harbor",
     path: launcherPath,
     type: "stdio",
     allowed_origins: [EXTENSION_ORIGIN],
