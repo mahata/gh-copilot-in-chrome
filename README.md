@@ -84,11 +84,12 @@ then remove the extension in `chrome://extensions`.
   and choose **Connect**. Once GitHub accepts it, the companion saves it in your macOS
   login keychain, and from then on the panel opens straight into the chat. **Sign out**
   deletes the saved PAT and asks for a new one.
-- **Chat:** write a prompt of up to 32,768 characters and choose **Send**, or press
-  ⌘ Enter or Ctrl Enter. Enter starts a new line. The menu next to **Send** restores the
-  model you last selected for that GitHub account when it remains available; otherwise, it
-  preselects the model with the lowest billing multiplier. Each option ends with the
-  multiplier the SDK reported, such as "(1×)".
+- **Chat:** write a prompt of up to 32,768 characters and choose **Send**, or press Enter,
+  ⌘ Enter or Ctrl Enter. Shift Enter starts a new line. While an input method is composing,
+  such as when converting to kanji, Enter only confirms the conversion. The menu next to
+  **Send** restores the model you last selected for that GitHub account when it remains
+  available; otherwise, it preselects the model with the lowest billing multiplier. Each
+  option ends with the multiplier the SDK reported, such as "(1×)".
 - **Replies:** they stream in and render as Markdown (headings, lists, code blocks,
   tables, links), and the conversation follows them while you are scrolled to its end.
   Links open in a new tab; only `http`, `https` and `mailto` links are clickable, and

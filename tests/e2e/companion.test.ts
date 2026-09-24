@@ -298,7 +298,7 @@ test("keeps the conversation across turns and model changes until New chat start
   await expect(replies).toHaveText([/^Reply 1 \(fake-other\) to: Fresh question/]);
 });
 
-test("sends with Command or Control Enter, keeps Enter for new lines, and ignores blank prompts", async () => {
+test("sends with Enter, Command Enter or Control Enter, leaves Shift and Alt Enter to the textarea, and ignores blank prompts", async () => {
   const { page } = await openPanel();
   await connect(page);
   const promptInput = promptField(page);
@@ -307,26 +307,31 @@ test("sends with Command or Control Enter, keeps Enter for new lines, and ignore
   const conversation = conversationLog(page);
   await promptInput.evaluate((textarea: HTMLTextAreaElement) =>
     textarea.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") textarea.dataset.lastEnter = event.defaultPrevented ? "consumed" : "typed";
+      if (event.key !== "Enter") return;
+      const modifiers = [event.metaKey && "Meta", event.ctrlKey && "Control", event.altKey && "Alt", event.shiftKey && "Shift"];
+      const chord = [...modifiers.filter(Boolean), "Enter"].join("+");
+      textarea.dataset.lastEnter = `${chord} ${event.defaultPrevented ? "consumed" : "default"}`;
     }),
   );
 
   await promptInput.fill(" \n\t ");
   await expect(sendButton).toBeDisabled();
-  await promptInput.press("Meta+Enter");
-  await promptInput.press("Control+Enter");
+  for (const chord of ["Enter", "Meta+Enter", "Control+Enter"]) {
+    await promptInput.press(chord);
+    await expect(promptInput).toHaveAttribute("data-last-enter", `${chord} consumed`);
+  }
   await expect(promptInput).toHaveValue(" \n\t ");
-  await expect(promptInput).toHaveAttribute("data-last-enter", "consumed");
   await expect(conversation).toBeEmpty();
 
   const prompt = "  Keep this indentation\nand this second line";
   await promptInput.fill("  Keep this indentation");
-  await promptInput.press("Enter");
-  await expect(promptInput).toHaveAttribute("data-last-enter", "typed");
+  await promptInput.press("Shift+Enter");
+  await expect(promptInput).toHaveAttribute("data-last-enter", "Shift+Enter default");
   await promptInput.pressSequentially("and this second line");
   await expect(promptInput).toHaveValue(prompt);
-  await promptInput.press("Control+Enter");
-  await expect(promptInput).toHaveAttribute("data-last-enter", "consumed");
+  await expect(conversation).toBeEmpty();
+  await promptInput.press("Enter");
+  await expect(promptInput).toHaveAttribute("data-last-enter", "Enter consumed");
   await expectReplyFinished(page);
   await expect(promptInput).toHaveValue("");
   await expect(conversation.locator(".prompt-text")).toHaveJSProperty("textContent", prompt);
@@ -340,6 +345,18 @@ test("sends with Command or Control Enter, keeps Enter for new lines, and ignore
   await expectReplyFinished(page);
   await expect(promptInput).toHaveValue("");
   await expect(conversation.locator(".reply").last()).toContainText("Reply 2 (fake-reply) to: Now with Command");
+
+  await promptInput.fill("Now with Control");
+  await promptInput.press("Control+Enter");
+  await expectReplyFinished(page);
+  await expect(promptInput).toHaveValue("");
+  await expect(conversation.locator(".reply").last()).toContainText("Reply 3 (fake-reply) to: Now with Control");
+
+  await promptInput.fill("Not with Alt");
+  await promptInput.press("Alt+Enter");
+  await expect(promptInput).toHaveAttribute("data-last-enter", "Alt+Enter default");
+  await expect(conversation.getByRole("article")).toHaveCount(3);
+  await expect(sendButton).toBeEnabled();
 });
 
 test("renders Markdown in replies with links limited to safe schemes and raw HTML kept as text", async () => {
@@ -422,23 +439,30 @@ test("renders Markdown in replies with links limited to safe schemes and raw HTM
   expect(networkRequests).toEqual([]);
 });
 
-test("waits for an input method to finish composing before Command or Control Enter sends", async () => {
+test("waits for an input method to finish composing before Enter sends", async () => {
   const { page } = await openPanel();
   await connect(page);
   const promptInput = promptField(page);
   await expect(promptInput).toBeEnabled();
   const conversation = conversationLog(page);
   const inputMethod = await page.context().newCDPSession(page);
+  // An input method consumes the Enter that confirms a conversion, so Chrome reports keyCode 229 and types nothing.
+  const confirmConversionWithEnter = async (text: string) => {
+    const enter = { key: "Enter", code: "Enter" };
+    await inputMethod.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...enter, windowsVirtualKeyCode: 229 });
+    await inputMethod.send("Input.insertText", { text });
+    await inputMethod.send("Input.dispatchKeyEvent", { type: "keyUp", ...enter, windowsVirtualKeyCode: 13 });
+  };
 
   await promptInput.focus();
   await inputMethod.send("Input.imeSetComposition", { text: "にほんご", selectionStart: 4, selectionEnd: 4 });
   await expect(button(page, "Send")).toBeEnabled();
   await promptInput.press("ControlOrMeta+Enter");
+  await confirmConversionWithEnter("日本語");
+  await expect(promptInput).toHaveValue("日本語");
   await expect(conversation).toBeEmpty();
 
-  await inputMethod.send("Input.insertText", { text: "日本語" });
-  await expect(promptInput).toHaveValue("日本語");
-  await promptInput.press("ControlOrMeta+Enter");
+  await promptInput.press("Enter");
   await expect(conversation.locator(".prompt-text")).toHaveText("日本語");
 });
 
@@ -473,7 +497,8 @@ test("explains a prompt over the length limit and refuses to send it", async () 
   await expect(page.getByText(limitText)).toBeVisible();
   await expect(promptInput).toHaveAccessibleDescription(limitText);
   await expect(sendButton).toBeDisabled();
-  await promptInput.press("ControlOrMeta+Enter");
+  await promptInput.press("Enter");
+  await expect(page.getByText(limitText)).toBeVisible();
   await expect(conversationLog(page)).toBeEmpty();
 
   await promptInput.press("Backspace");
@@ -712,6 +737,9 @@ test("swaps Send for Stop while a reply streams, marks a stopped reply incomplet
   await expect(button(page, "New chat")).toBeDisabled();
 
   await promptField(page).fill("Next question");
+  await promptField(page).press("Enter");
+  await expect(promptField(page)).toHaveValue("Next question");
+  await expect(conversation.getByRole("article")).toHaveCount(1);
   await stopButton.press("Enter");
 
   await expect(conversation.locator(".turn-note")).toHaveText("Stopped. Output may be incomplete.");

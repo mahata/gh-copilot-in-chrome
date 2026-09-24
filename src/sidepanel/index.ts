@@ -370,7 +370,8 @@ function sendPrompt(chosenModel: ModelSummary, prompt: string, page?: PageContex
 }
 
 promptInput.addEventListener("keydown", (event) => {
-  if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey) || event.isComposing) return;
+  if (event.key !== "Enter" || event.isComposing) return;
+  if ((event.shiftKey || event.altKey) && !(event.metaKey || event.ctrlKey)) return;
   event.preventDefault();
   promptForm.requestSubmit();
 });
