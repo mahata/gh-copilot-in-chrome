@@ -1,7 +1,7 @@
 import { endianness } from "node:os";
 import type { ErrorCode } from "../protocol/messages.ts";
 
-export const MAX_INBOUND_FRAME_BYTES = 256 * 1024;
+export const MAX_INBOUND_FRAME_BYTES = 1024 * 1024;
 export const MAX_OUTBOUND_FRAME_BYTES = 1024 * 1024;
 
 const LENGTH_PREFIX_BYTES = 4;

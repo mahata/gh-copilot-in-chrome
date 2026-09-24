@@ -5,11 +5,13 @@ import {
   CONNECT_ERROR_TEXT,
   CREDENTIAL_ERROR_TEXT,
   failedTurnNote,
+  includedPageLabel,
   INTERRUPTED_TURN_NOTE,
   MODEL_PLACEHOLDER_TEXT,
   modelOptionLabel,
   NO_MODELS_TEXT,
   NOT_FINE_GRAINED_PAT,
+  PAGE_CAPTURE_ERROR_TEXT,
   promptTooLongText,
   replyAuthorLabel,
   SAVED_TOKEN_REJECTED_TEXT,
@@ -18,10 +20,11 @@ import {
   STOPPED_TURN_NOTE,
 } from "./copy.ts";
 import { pickModel, savedModelKey } from "./models.ts";
+import { chromePageCaptureDeps, readActivePage } from "./page.ts";
 import { createTranscript } from "./transcript.ts";
 import type { TranscriptTurn } from "./transcript.ts";
 import { isFineGrainedPersonalAccessToken, MAX_PROMPT_LENGTH } from "../protocol/messages.ts";
-import type { ErrorCode, ModelSummary } from "../protocol/messages.ts";
+import type { ErrorCode, ModelSummary, PageContext } from "../protocol/messages.ts";
 import "./style.css";
 
 type PanelPhase = "detecting" | "unavailable" | "ready" | "connecting" | "connected" | "sending";
@@ -49,6 +52,7 @@ const promptForm = element("prompt-form", HTMLFormElement);
 const promptInput = element("prompt", HTMLTextAreaElement);
 const promptLimit = element("prompt-limit", HTMLParagraphElement);
 const model = element("model", HTMLSelectElement);
+const includePage = element("include-page", HTMLInputElement);
 const sendButton = element("send", HTMLButtonElement);
 const stopButton = element("stop", HTMLButtonElement);
 
@@ -60,6 +64,7 @@ let connectingWithSavedToken = false;
 let unsavedToken = false;
 let signOutPending = false;
 let stopRequested = false;
+let capturingPage = false;
 let modelsById = new Map<string, ModelSummary>();
 let activeLogin: string | undefined;
 let activeTurn: TranscriptTurn | undefined;
@@ -102,6 +107,7 @@ function discardCompanionState() {
   unsavedToken = false;
   signOutPending = false;
   stopRequested = false;
+  capturingPage = false;
   activeLogin = undefined;
   activeTurn = undefined;
   showModelPlaceholder(MODEL_PLACEHOLDER_TEXT.disconnected);
@@ -283,14 +289,17 @@ function updateControls() {
   pat.disabled = !ready;
   connectButton.disabled = !ready || pat.value.trim() === "";
   newChatButton.hidden = !transcript.hasTurns();
-  newChatButton.disabled = !connected;
-  signOutButton.disabled = !companionReady || signOutPending;
-  model.disabled = !connected || !hasModels;
-  promptInput.disabled = !(connected || sending) || !hasModels;
+  // A pending capture sends into the current conversation and account once it finishes.
+  newChatButton.disabled = !connected || capturingPage;
+  signOutButton.disabled = !companionReady || signOutPending || capturingPage;
+  model.disabled = !connected || !hasModels || capturingPage;
+  includePage.disabled = !(connected || sending) || !hasModels || capturingPage;
+  promptInput.disabled = !(connected || sending) || !hasModels || capturingPage;
   promptLimit.textContent = promptTooLong ? promptTooLongText(promptLength) : "";
   promptLimit.hidden = !promptTooLong;
   sendButton.hidden = sending;
-  sendButton.disabled = !connected || !modelsById.has(model.value) || promptInput.value.trim() === "" || promptTooLong;
+  sendButton.disabled =
+    !connected || capturingPage || !modelsById.has(model.value) || promptInput.value.trim() === "" || promptTooLong;
   stopButton.hidden = !sending;
   stopButton.disabled = !sending || stopRequested;
   tryAgainButton.hidden = !canTryAgain();
@@ -324,15 +333,41 @@ promptForm.addEventListener("submit", (event) => {
   if (sendButton.disabled || chosenModel === undefined) return;
   const prompt = promptInput.value;
   hideError();
-  if (bridge?.send({ type: "send", model: chosenModel.id, prompt })) {
-    phase = "sending";
-    stopRequested = false;
-    promptInput.value = "";
-    activeTurn = transcript.startTurn(prompt, replyAuthorLabel(chosenModel.name));
+  if (includePage.checked) void sendWithPage(chosenModel, prompt);
+  else sendPrompt(chosenModel, prompt);
+  updateControls();
+});
+
+async function sendWithPage(chosenModel: ModelSummary, prompt: string) {
+  const capturingBridge = bridge;
+  capturingPage = true;
+  updateControls();
+  const result = await readActivePage(chromePageCaptureDeps());
+  if (bridge !== capturingBridge || !capturingPage) return;
+  capturingPage = false;
+  if (!result.ok) {
+    showError(PAGE_CAPTURE_ERROR_TEXT[result.failure], result.failure);
+  } else if (phase === "connected" && modelsById.get(chosenModel.id) === chosenModel) {
+    sendPrompt(chosenModel, prompt, result.page);
   }
   updateControls();
   promptInput.focus();
-});
+}
+
+function sendPrompt(chosenModel: ModelSummary, prompt: string, page?: PageContext) {
+  const message = page === undefined
+    ? { type: "send" as const, model: chosenModel.id, prompt }
+    : { type: "send" as const, model: chosenModel.id, prompt, page };
+  if (bridge?.send(message)) {
+    phase = "sending";
+    stopRequested = false;
+    promptInput.value = "";
+    includePage.checked = false;
+    activeTurn = transcript.startTurn(prompt, replyAuthorLabel(chosenModel.name), page && includedPageLabel(page));
+  }
+  updateControls();
+  promptInput.focus();
+}
 
 promptInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey) || event.isComposing) return;

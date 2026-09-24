@@ -1,4 +1,6 @@
 import type { BridgeFailure } from "./companion.ts";
+import type { PageCaptureFailure } from "./page.ts";
+import { PAGE_CAPTURE_TIMEOUT_MS } from "./page.ts";
 import { HOST_NAME } from "../protocol/identity.ts";
 import { CONNECT_TIMEOUT_MS, MAX_OUTPUT_LENGTH, MAX_PROMPT_LENGTH, TURN_TIMEOUT_MS } from "../protocol/messages.ts";
 import type { ErrorCode, ModelSummary } from "../protocol/messages.ts";
@@ -29,6 +31,17 @@ export const NOT_FINE_GRAINED_PAT = {
   code: "not_fine_grained_pat",
   text: "Only fine-grained PATs are accepted, and they start with github_pat_. The token was not sent.",
 } as const;
+
+export const PAGE_CAPTURE_ERROR_TEXT: Record<PageCaptureFailure, string> = {
+  page_unavailable:
+    "Copilot can't read this tab, so nothing was sent. Click the extension's toolbar icon while this tab is open " +
+    "to allow it, then send again. Chrome never allows reading chrome:// pages, the Chrome Web Store or other extensions.",
+  page_timeout: `The tab did not respond within ${PAGE_CAPTURE_TIMEOUT_MS / 1000} seconds, so nothing was sent.`,
+};
+
+export function includedPageLabel({ title, url }: { title: string; url: string }) {
+  return `Included page: ${title === "" ? url : title}`;
+}
 
 export const BRIDGE_FAILURE_TEXT: Record<BridgeFailure, string> = {
   companion_not_installed: `The local companion is not installed. To install it, ${REINSTALL_HINT}`,

@@ -122,6 +122,10 @@ pre {
 /* auto keeps the composer at the bottom of the panel while the transcript is hidden. */
 .composer { margin-top: auto; padding-top: 12px; }
 .composer .row { margin-top: 8px; }
+.include-page { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; }
+.include-page input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.include-page:has(input:disabled) { color: var(--muted); }
+.turn-attachment { margin-bottom: 6px; font-size: 0.8rem; color: var(--muted); overflow-wrap: anywhere; }
 .prompt-limit { margin-top: 6px; font-size: 0.85rem; font-weight: 600; color: var(--error); }
 .visually-hidden {
   position: absolute;

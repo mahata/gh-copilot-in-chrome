@@ -1,10 +1,14 @@
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export const MAX_TOKEN_LENGTH = 255;
 export const MAX_FIELD_LENGTH = 200;
 export const MAX_MODELS = 200;
 export const MAX_PROMPT_LENGTH = 32_768;
 export const MAX_OUTPUT_LENGTH = 65_536;
+export const MAX_PAGE_URL_LENGTH = 4_096;
+export const MAX_PAGE_TITLE_LENGTH = 1_000;
+export const MAX_PAGE_TEXT_LENGTH = 100_000;
+export const MAX_PAGE_SELECTION_LENGTH = 32_768;
 export const CONNECT_TIMEOUT_MS = 60_000;
 export const TURN_TIMEOUT_MS = 300_000;
 
@@ -43,10 +47,12 @@ export type ErrorStage = keyof ErrorCodesByStage;
 export type ErrorCode<Stage extends ErrorStage> = ErrorCodesByStage[Stage][number];
 export type TurnOutcome = (typeof TURN_OUTCOMES)[number];
 
+export type PageContext = { url: string; title: string; text: string; selection?: string; truncated: boolean };
+
 export type PanelMessage =
   | { type: "connect"; token: string; remember: boolean }
   | { type: "connect_saved" }
-  | { type: "send"; model: string; prompt: string }
+  | { type: "send"; model: string; prompt: string; page?: PageContext }
   | { type: "stop" }
   | { type: "new_chat" }
   | { type: "forget" };
@@ -87,11 +93,7 @@ export function parsePanelMessage(value: unknown): PanelMessage | undefined {
     case "connect_saved":
       return hasExactlyKeys(value, ["type"]) ? { type: "connect_saved" } : undefined;
     case "send":
-      return hasExactlyKeys(value, ["type", "model", "prompt"]) &&
-        isBoundedField(value.model) &&
-        isBoundedText(value.prompt, MAX_PROMPT_LENGTH)
-        ? { type: "send", model: value.model, prompt: value.prompt }
-        : undefined;
+      return parseSend(value);
     case "stop":
       return hasExactlyKeys(value, ["type"]) ? { type: "stop" } : undefined;
     case "new_chat":
@@ -134,6 +136,23 @@ export function parseCompanionMessage(value: unknown): CompanionMessage | undefi
     default:
       return undefined;
   }
+}
+
+function parseSend(value: JsonObject): PanelMessage | undefined {
+  if (!hasExactlyKeys(value, ["type", "model", "prompt"], ["page"])) return undefined;
+  if (!isBoundedField(value.model) || !isBoundedText(value.prompt, MAX_PROMPT_LENGTH)) return undefined;
+  if (value.page === undefined) return { type: "send", model: value.model, prompt: value.prompt };
+  const page = parsePageContext(value.page);
+  return page ? { type: "send", model: value.model, prompt: value.prompt, page } : undefined;
+}
+
+export function parsePageContext(value: unknown): PageContext | undefined {
+  if (!isJsonObject(value) || !hasExactlyKeys(value, ["url", "title", "text", "truncated"], ["selection"])) return undefined;
+  const { url, title, text, selection, truncated } = value;
+  if (!isBoundedText(url, MAX_PAGE_URL_LENGTH) || typeof truncated !== "boolean") return undefined;
+  if (!isStringWithin(title, MAX_PAGE_TITLE_LENGTH) || !isStringWithin(text, MAX_PAGE_TEXT_LENGTH)) return undefined;
+  if (selection === undefined) return { url, title, text, truncated };
+  return isBoundedText(selection, MAX_PAGE_SELECTION_LENGTH) ? { url, title, text, selection, truncated } : undefined;
 }
 
 function parseConnected(value: JsonObject): CompanionMessage | undefined {
@@ -189,6 +208,10 @@ export function isNonNegativeNumber(value: unknown): value is number {
 
 function isBoundedText(value: unknown, maxLength: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= maxLength;
+}
+
+function isStringWithin(value: unknown, maxLength: number): value is string {
+  return typeof value === "string" && value.length <= maxLength;
 }
 
 function isInteger(value: unknown): value is number {

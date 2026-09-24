@@ -87,7 +87,7 @@ function startCompanion({
   };
 }
 
-const hello = { type: "hello", protocolVersion: 2, sdkVersion: "1.0.14", savedToken: false };
+const hello = { type: "hello", protocolVersion: 3, sdkVersion: "1.0.14", savedToken: false };
 const connected = { type: "connected", login: "octocat", models: [{ id: "gpt-5-mini", name: "GPT-5 mini", multiplier: 0 }] };
 
 afterEach(() => {

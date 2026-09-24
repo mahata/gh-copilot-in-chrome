@@ -36,7 +36,7 @@ class FakePort implements NativePort {
   }
 }
 
-const hello = { type: "hello", protocolVersion: 2, sdkVersion: "1.0.14", savedToken: true };
+const hello = { type: "hello", protocolVersion: 3, sdkVersion: "1.0.14", savedToken: true };
 let port: FakePort;
 let events: BridgeEvent[];
 let connectedHostNames: string[];
@@ -109,7 +109,7 @@ describe("openCompanionBridge", () => {
   it.each([
     ["a session message before hello", [{ type: "done", outcome: "complete" }]],
     ["a hello from an older companion", [{ type: "hello", protocolVersion: 1, sdkVersion: "1.0.14" }]],
-    ["a hello for another protocol version", [{ ...hello, protocolVersion: 3 }]],
+    ["a hello for another protocol version", [{ ...hello, protocolVersion: 2 }]],
     ["a second hello", [hello, hello]],
     ["a malformed message", [hello, { type: "delta", text: 42 }]],
     ["an unknown message", [hello, { type: "eval", code: "alert(1)" }]],

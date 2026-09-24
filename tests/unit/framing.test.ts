@@ -7,7 +7,14 @@ import {
   createFrameDecoder,
   encodeFrame,
 } from "../../src/companion/framing.ts";
-import { MAX_FIELD_LENGTH, MAX_PROMPT_LENGTH } from "../../src/protocol/messages.ts";
+import {
+  MAX_FIELD_LENGTH,
+  MAX_PAGE_SELECTION_LENGTH,
+  MAX_PAGE_TEXT_LENGTH,
+  MAX_PAGE_TITLE_LENGTH,
+  MAX_PAGE_URL_LENGTH,
+  MAX_PROMPT_LENGTH,
+} from "../../src/protocol/messages.ts";
 
 function nativeLengthPrefix(length: number) {
   const prefix = Buffer.alloc(4);
@@ -95,9 +102,23 @@ describe("createFrameDecoder", () => {
       type: "send",
       model: escapedEverywhere.repeat(MAX_FIELD_LENGTH),
       prompt: escapedEverywhere.repeat(MAX_PROMPT_LENGTH),
+      page: {
+        url: escapedEverywhere.repeat(MAX_PAGE_URL_LENGTH),
+        title: escapedEverywhere.repeat(MAX_PAGE_TITLE_LENGTH),
+        text: escapedEverywhere.repeat(MAX_PAGE_TEXT_LENGTH),
+        selection: escapedEverywhere.repeat(MAX_PAGE_SELECTION_LENGTH),
+        truncated: true,
+      },
     };
     const frame = encodeFrame(message);
-    expect(frame.length).toBeGreaterThan(6 * (MAX_FIELD_LENGTH + MAX_PROMPT_LENGTH));
+    const maxCharacters =
+      MAX_FIELD_LENGTH +
+      MAX_PROMPT_LENGTH +
+      MAX_PAGE_URL_LENGTH +
+      MAX_PAGE_TITLE_LENGTH +
+      MAX_PAGE_TEXT_LENGTH +
+      MAX_PAGE_SELECTION_LENGTH;
+    expect(frame.length).toBeGreaterThan(6 * maxCharacters);
 
     decoder.push(frame);
     expect(frames).toEqual([message]);

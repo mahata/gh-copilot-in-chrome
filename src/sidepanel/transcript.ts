@@ -18,7 +18,7 @@ export function createTranscript(log: HTMLElement) {
     log.hidden = true;
   }
 
-  function startTurn(prompt: string, replyAuthor: string): TranscriptTurn {
+  function startTurn(prompt: string, replyAuthor: string, attachmentLabel?: string): TranscriptTurn {
     const reply = document.createElement("div");
     reply.className = "reply";
     let replyText = "";
@@ -29,6 +29,7 @@ export function createTranscript(log: HTMLElement) {
     turn.className = "turn";
     turn.append(
       textElement("p", "speaker visually-hidden", PROMPT_AUTHOR_LABEL),
+      ...(attachmentLabel === undefined ? [] : [textElement("p", "turn-attachment", attachmentLabel)]),
       textElement("pre", "prompt-text", prompt),
       textElement("p", "speaker visually-hidden", replyAuthor),
       reply,

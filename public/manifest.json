@@ -5,7 +5,7 @@
   "description": "Private, unofficial side panel for chatting with GitHub Copilot through the official SDK in a local companion.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyJ6+HhQGzNpf1EAPIHtKRIXiGeDsJJdLsEq35qpK33HsurrvyxTVGbzORrTgcMAvA1e+RFyLeKBugceOBW7wAhzVVF0LiKkAEiAqie7CEL4q+X0yE4nuX6km99d3gvEIwma4waiRBcu2gPHfR/v2nCa7sSp1Nxemkw+jMyPHxvJX3mUDYZKNhUq6pO6W8vMEOWZHuUq0khYTEGQbCNfE94+e/1CqoQDjI0/vT5qPZu7MRnyaEpUBmQHPZvWhhWo8tW+uo5atRW6YKErnAYRREIV5fYXDtthDZQJQmWTlpjI8lb/ZKMo+zCBU8NXBbBRPJyAgWz83GFKitn1KgotwGwIDAQAB",
   "minimum_chrome_version": "120",
-  "permissions": ["sidePanel", "nativeMessaging"],
+  "permissions": ["sidePanel", "nativeMessaging", "activeTab", "scripting"],
   "background": {
     "service_worker": "background.js",
     "type": "module"

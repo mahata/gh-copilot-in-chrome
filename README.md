@@ -7,7 +7,8 @@ companion process on your Mac. This project is not affiliated with GitHub.
 **Current status:** the chat panel, the companion, its macOS Keychain storage for your PAT
 and its installer are built and tested against a scripted fake companion. Whether a real
 fine-grained PAT authenticates through the SDK, which models it lists and how usage is
-billed are all **unverified** until you run the [live check](#live-check).
+billed are all **unverified** until you run the [live check](#live-check). So is whether
+Chrome grants page access when the toolbar icon opens the panel.
 
 ## Why a local companion
 
@@ -32,6 +33,8 @@ flowchart LR
 
 - The extension cannot reach the network. It has no host permissions, and its CSP sets
   `connect-src 'none'`. It can talk only to the companion.
+- It reads a web page only when you tick **Include this page** for a prompt, and only in a
+  tab Chrome has granted it through `activeTab`, by your clicking its toolbar icon there.
 - Chrome starts the companion when the panel opens, so the panel can tell whether it is
   installed and whether a PAT is saved. With a saved PAT, the panel connects right away.
   Otherwise nothing is sent to GitHub until you choose **Connect**.
@@ -90,6 +93,17 @@ then remove the extension in `chrome://extensions`.
   Links open in a new tab; only `http`, `https` and `mailto` links are clickable, and
   images appear as links because the panel loads no remote content. While a reply streams, **Stop** replaces **Send**. It ends the
   reply early and keeps what arrived. You can draft the next prompt meanwhile.
+- **Pages:** tick **Include this page** before sending to have Copilot read the tab you are
+  viewing. The panel reads the page's title, URL, visible text and any text you selected,
+  and sends them with that one prompt. The box clears after each send. Chrome lets the
+  extension read a tab only after you click the toolbar icon while that tab is open, and
+  only until the tab closes or navigates to a different site (origin). Pages on the same
+  origin stay readable after a navigation. If the panel cannot read the tab, it sends nothing
+  and says `page_unavailable`: click the toolbar icon on that tab and send again. Chrome
+  never allows reading `chrome://` pages, the Chrome Web Store or other extensions. Up to
+  100,000 characters of text and 32,768 of selection are sent, and a note tells Copilot when
+  the page was cut short. The page stays in the conversation, so a few large pages can lead
+  to `context_limit` sooner.
 - **Conversations:** the conversation carries across prompts, including when you switch
   models. **New chat** starts over, and Copilot no longer sees the earlier messages. If a
   conversation outgrows the model's context window, a reply can fail with
@@ -121,13 +135,18 @@ CI.
 5. Choose **New chat** and check that Copilot no longer sees the earlier messages. Then ask
    for a long answer and choose **Stop** while it streams. The partial reply should stay,
    marked "Stopped. Output may be incomplete."
-6. Close the panel and open it again. It should open straight into the chat, connected
+6. Open an ordinary web page, click the toolbar icon on it, tick **Include this page** and
+   ask for a summary. The reply should reflect the page. Then follow a link on that page
+   to a different site, tick the box again and send: the panel should report
+   `page_unavailable` and send nothing until you click the toolbar icon again. Record whether clicking the icon while
+   the panel is open grants access, closes the panel, or both.
+7. Close the panel and open it again. It should open straight into the chat, connected
    with the saved PAT.
-7. Record any error codes, the Chrome version, the SDK version from
+8. Record any error codes, the Chrome version, the SDK version from
    `npm ls @github/copilot-sdk`, and the model names and multipliers in the model menu.
    Check usage in your GitHub account. Do not record tokens, raw server responses or
    headers.
-8. Choose **Sign out** and run the command from step 3 again. It should report that the
+9. Choose **Sign out** and run the command from step 3 again. It should report that the
    item could not be found, and the panel should ask for a PAT again. Close the panel and
    revoke the PAT.
 
@@ -156,14 +175,22 @@ account. It does not mean approval to distribute this or to offer it to other pe
 
 The extension:
 
-- Requests only `sidePanel` and `nativeMessaging`. It has no host permissions, no content
-  scripts and no access to pages.
+- Requests only `sidePanel`, `nativeMessaging`, `activeTab` and `scripting`. It has no host
+  permissions and no content scripts. `activeTab` gives it access only to a tab where you
+  clicked its toolbar icon, until that tab closes or navigates to another origin
+  (same-origin navigation keeps it), and Chrome shows no
+  install-time warning for it.
+- Runs a script in a tab only when you send a prompt with **Include this page** ticked. The
+  script runs in the tab's top frame, reads `document.title`, `location.href`, the body's
+  `innerText` and the current selection, and returns them. It does not read form values,
+  cookies, storage or other frames, and it changes nothing on the page. The panel gives up
+  after 5 seconds and then sends nothing.
 - Sends the companion a PAT only if it starts with `github_pat_`, and clears the field on
   submission. It stores only the last selected model identifier for each GitHub account in
   extension-local browser storage. The companion stores accepted PATs in the macOS login
   keychain; available models and the conversation live only in the panel's memory.
 - Sends only the prompts you submit, exactly as typed, and refuses any over 32,768
-  characters. It attaches no page content, selection or files.
+  characters. It attaches page content only as described above, and never files.
 - Renders prompts as plain text. Renders responses as Markdown by building DOM nodes from
   [marked](https://marked.js.org/)'s tokens, never through `innerHTML`, so raw HTML in a
   response shows as literal text. Errors show fixed text and a code,
@@ -175,7 +202,8 @@ The companion:
   extension starts it. Chrome's host manifest also allows only this extension ID.
 - Accepts six messages: connect with a PAT, optionally remembering it; connect with the
   saved PAT; send a prompt of at most 32,768 characters to a model from this connection's
-  list; stop; start a new chat; and forget the saved PAT.
+  list, optionally with a page of at most 4,096 characters of URL, 1,000 of title, 100,000
+  of text and 32,768 of selection; stop; start a new chat; and forget the saved PAT.
 - Keeps a saved PAT as a generic password item in your login keychain, with service
   `io.github.mahata.gh_copilot_in_chrome` and account `fine-grained-pat`:
   - It names the login keychain (`login.keychain`) in every `security` command, so a
@@ -205,7 +233,9 @@ The companion:
   rest of its environment is a system `PATH` and the variables the SDK adds, so tokens such
   as `GH_TOKEN` are not passed on. Neither are proxy and custom CA settings such as
   `HTTPS_PROXY` or `NODE_EXTRA_CA_CERTS`, so networks that require them will not work.
-- Enforces limits: 256 KiB per inbound message, 1 MiB per outbound message (Chrome's
+- Puts an attached page ahead of your prompt, between markers, with an instruction to treat
+  it as data rather than instructions.
+- Enforces limits: 1 MiB per inbound message, 1 MiB per outbound message (Chrome's
   limit), 32,768 characters per prompt, 65,536 characters per reply, 60 seconds per
   connect, 5 minutes per reply, and one connect or prompt at a time. The reply length and
   time limits end a reply with an explicit error and keep what arrived.
@@ -223,6 +253,15 @@ The companion:
   connection and on exit.
 
 Accepted risks:
+
+- An included page goes to GitHub as part of the conversation, including its full URL.
+  URLs can carry secrets such as session or reset tokens in their query strings, and the
+  visible text can include private information shown on the page. Leave **Include this
+  page** unticked on such pages.
+- Page text can contain instructions aimed at the model (prompt injection). The companion
+  tells the model to treat the page as data, but a model may still follow it and give a
+  misleading answer. The session has no tools and rejects every permission request, so the
+  page cannot make Copilot act on anything.
 
 - A saved PAT is encrypted at rest in your login keychain, never in Chrome's profile. But
   macOS trusts the tool that created an item to read it without warning. The companion
@@ -252,7 +291,7 @@ Accepted risks:
   the SDK, review `src/companion/sdk-gateway.ts`, then run `pnpm check` and the live check
   again.
 
-GitHub receives the PAT, your prompts and the conversation so far with the SDK's system
+GitHub receives the PAT, your prompts, any pages you include and the conversation so far with the SDK's system
 instructions, the chosen model, and whatever request metadata and telemetry the official
 runtime sends. This project neither configures nor suppresses that telemetry.
 Signing out, starting a new chat or closing the panel does not retract anything already
@@ -273,7 +312,9 @@ browser tests. The browser tests:
   profile.
 - Load the built extension and drive every panel state, including the first-run PAT
   prompt, a missing companion, rejected tokens, no models, saving, reusing, replacing and
-  unreadable saved PATs, signing out, multi-turn chat, model switches, New chat, keyboard
+  unreadable saved PATs, signing out, multi-turn chat, model switches, New chat, including
+  a page (with Chrome's scripting stubbed, because a test cannot click the toolbar icon to
+  grant `activeTab`) and refusing to when access is missing, keyboard
   shortcuts and input methods, the prompt length limit, following a streaming reply, Stop,
   failures, a crash mid-reply, closing the panel, permissions and layout.
 - Run the real protocol code in the fake companion, which never loads the SDK and keeps
@@ -297,9 +338,9 @@ no secrets and has read-only repository access.
 
 The code is organized as:
 
-- `src/sidepanel/`: the chat panel UI and its native messaging bridge.
+- `src/sidepanel/`: the chat panel UI, its native messaging bridge and page capture.
 - `src/companion/`: the companion's entry point, protocol state machine, SDK gateway,
-  Keychain store, frame codec and installer.
+  Keychain store, frame codec, page prompt and installer.
 - `src/protocol/`: the messages and extension identity shared by both sides.
 
 ## Evidence
@@ -313,6 +354,10 @@ The code is organized as:
 - [SDK streaming events](https://github.com/github/copilot-sdk/blob/main/docs/features/streaming-events.md)
   and [usage and billing](https://github.com/github/copilot-sdk/blob/main/docs/features/usage-and-billing.md):
   `assistant.message_delta`, `session.idle` and the `assistant.usage` multiplier.
+- [`activeTab`](https://developer.chrome.com/docs/extensions/develop/concepts/activeTab) and
+  [`chrome.scripting`](https://developer.chrome.com/docs/extensions/reference/api/scripting):
+  temporary access to the tab where the user invoked the extension, kept across same-origin navigation and ended by
+  navigating to another origin or closing the tab.
 - [Chrome native messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging)
   and [the manifest `key`](https://developer.chrome.com/docs/extensions/reference/manifest/key).
 - `man security`, under `add-generic-password`: `-U` replaces an existing item, and by
