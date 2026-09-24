@@ -315,6 +315,86 @@ test("sends with Command or Control Enter, keeps Enter for new lines, and ignore
   await expect(conversation.locator(".reply").last()).toContainText("Reply 2 (fake-reply) to: Now with Command");
 });
 
+test("renders Markdown in replies with links limited to safe schemes and raw HTML kept as text", async () => {
+  const { page, networkRequests, dialogs } = await openPanel();
+  await connect(page);
+  await expect(promptField(page)).toBeEnabled();
+  const prompt = [
+    "",
+    "",
+    "## Heading",
+    "",
+    "Some **bold**, *italic*, `a<b` and ~~gone~~ text,",
+    "on two lines. Tom &amp; Jerry.",
+    "",
+    "- [x] done",
+    "- plain",
+    "",
+    "1. first",
+    "2. second",
+    "",
+    "* [ ] loose one",
+    "",
+    "* [x] loose two",
+    "",
+    "```ts",
+    "const x = 1 < 2;",
+    "```",
+    "",
+    "> quoted",
+    "",
+    "| Name | Value |",
+    "| :--- | ----: |",
+    "| a | 1 |",
+    "",
+    "[safe](https://example.com/docs) [unsafe](javascript:alert(1)) ![pic](https://example.com/x.png)",
+    "",
+    "<div onclick=\"alert(1)\">raw</div>",
+    "",
+  ].join("\n");
+  await sendPrompt(page, prompt);
+  await expectReplyFinished(page);
+  const reply = conversationLog(page).locator(".reply");
+
+  await expect(reply.locator("h2")).toHaveText("Heading");
+  await expect(reply.locator("strong")).toHaveText("bold");
+  await expect(reply.locator("em")).toHaveText("italic");
+  await expect(reply.locator("p > code")).toHaveText("a<b");
+  await expect(reply.locator("del")).toHaveText("gone");
+  await expect(reply.locator("p").filter({ hasText: "Some" })).toHaveJSProperty(
+    "textContent",
+    "Some bold, italic, a<b and gone text,\non two lines. Tom & Jerry.",
+  );
+  const tightList = reply.locator("ul").first();
+  await expect(tightList.locator("li")).toHaveText(["done", "plain"]);
+  await expect(tightList.locator("input[type=checkbox]")).toBeChecked();
+  await expect(tightList.locator("input[type=checkbox]")).toBeDisabled();
+  await expect(reply.locator("ol > li")).toHaveText(["first", "second"]);
+  const looseTasks = reply.locator("ul").nth(1).locator("li");
+  await expect(looseTasks).toHaveText(["loose one", "loose two"]);
+  await expect(looseTasks.locator("input[type=checkbox]")).toHaveCount(2);
+  await expect(looseTasks.nth(0).locator("input")).not.toBeChecked();
+  await expect(looseTasks.nth(1).locator("input")).toBeChecked();
+  await expect(reply.locator("pre > code")).toHaveText("const x = 1 < 2;");
+  await expect(reply.locator("blockquote")).toHaveText("quoted");
+  await expect(reply.locator("th")).toHaveText(["Name", "Value"]);
+  await expect(reply.locator("td")).toHaveText(["a", "1"]);
+  await expect(reply.locator("td").last()).toHaveCSS("text-align", "right");
+
+  const links = reply.getByRole("link");
+  await expect(links).toHaveText(["safe", "pic"]);
+  await expect(links.first()).toHaveAttribute("href", "https://example.com/docs");
+  await expect(links.first()).toHaveAttribute("target", "_blank");
+  await expect(links.first()).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(links.last()).toHaveAttribute("href", "https://example.com/x.png");
+  await expect(reply).toContainText("unsafe");
+  await expect(reply.locator('[href^="javascript:"], [onclick], div:not(.table-scroll), img')).toHaveCount(0);
+  await expect(reply).toContainText('<div onclick="alert(1)">raw</div>');
+  await expect(reply).toContainText(inertMarkup);
+  expect(dialogs).toEqual([]);
+  expect(networkRequests).toEqual([]);
+});
+
 test("waits for an input method to finish composing before Command or Control Enter sends", async () => {
   const { page } = await openPanel();
   await connect(page);

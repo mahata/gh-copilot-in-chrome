@@ -85,8 +85,10 @@ then remove the extension in `chrome://extensions`.
   model you last selected for that GitHub account when it remains available; otherwise, it
   preselects the model with the lowest billing multiplier. Each option ends with the
   multiplier the SDK reported, such as "(1×)".
-- **Replies:** they stream in as plain text, and the conversation follows them while you
-  are scrolled to its end. While a reply streams, **Stop** replaces **Send**. It ends the
+- **Replies:** they stream in and render as Markdown (headings, lists, code blocks,
+  tables, links), and the conversation follows them while you are scrolled to its end.
+  Links open in a new tab; only `http`, `https` and `mailto` links are clickable, and
+  images appear as links because the panel loads no remote content. While a reply streams, **Stop** replaces **Send**. It ends the
   reply early and keeps what arrived. You can draft the next prompt meanwhile.
 - **Conversations:** the conversation carries across prompts, including when you switch
   models. **New chat** starts over, and Copilot no longer sees the earlier messages. If a
@@ -162,7 +164,9 @@ The extension:
   keychain; available models and the conversation live only in the panel's memory.
 - Sends only the prompts you submit, exactly as typed, and refuses any over 32,768
   characters. It attaches no page content, selection or files.
-- Renders prompts and responses as text, never as HTML. Errors show fixed text and a code,
+- Renders prompts as plain text. Renders responses as Markdown by building DOM nodes from
+  [marked](https://marked.js.org/)'s tokens, never through `innerHTML`, so raw HTML in a
+  response shows as literal text. Errors show fixed text and a code,
   never the server's text or the token.
 
 The companion:
