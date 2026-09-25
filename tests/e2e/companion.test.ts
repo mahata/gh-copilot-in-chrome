@@ -1,9 +1,10 @@
 import { chromium, expect, test } from "@playwright/test";
 import type { BrowserContext, Page, Worker } from "@playwright/test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { runInstaller } from "../../src/companion/install.ts";
+import { COMPANION_EXECUTABLE_NAME } from "../../src/companion/layout.ts";
 import { EXTENSION_ID } from "../../src/protocol/identity.ts";
 import { capturePage, PAGE_LIMITS } from "../../src/sidepanel/page.ts";
 
@@ -46,16 +47,21 @@ async function openPanel({ withCompanion = true, savedToken }: PanelSetup = {}):
   mkdirSync(companionStateDirectory);
   const keychainPath = join(home, "fake-keychain");
   if (savedToken !== undefined) writeFileSync(keychainPath, savedToken);
+  const fakeBuildDirectory = join(home, "fake-companion-build");
+  mkdirSync(fakeBuildDirectory);
+  const fakeExecutablePath = join(fakeBuildDirectory, COMPANION_EXECUTABLE_NAME);
+  writeFileSync(fakeExecutablePath, `#!/bin/sh\nexec ${quoteForShell(process.execPath)} ${quoteForShell(fakeCompanionPath)} "$@"\n`);
+  chmodSync(fakeExecutablePath, 0o755);
   const installCompanion = async () => {
-    await runInstaller({
+    const exitCode = await runInstaller({
       args: [],
       platform: "darwin",
       home,
-      nodePath: process.execPath,
-      companionEntryPath: fakeCompanionPath,
+      buildDirectory: fakeBuildDirectory,
       store: { forgetToken: async () => false },
       output: { log: () => {}, error: () => {} },
     });
+    if (exitCode !== 0) throw new Error("The fake companion could not be installed.");
   };
   if (withCompanion) await installCompanion();
 
@@ -105,6 +111,10 @@ async function openPanel({ withCompanion = true, savedToken }: PanelSetup = {}):
         ? readFileSync(`${keychainPath}.prompts`, "utf8").trimEnd().split("\n").map((line) => JSON.parse(line) as string)
         : [],
   };
+}
+
+function quoteForShell(value: string) {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 const PAT_EXPLANATION = "Copilot needs a fine-grained PAT with the Copilot Requests permission to sign in as you.";

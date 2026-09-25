@@ -57,7 +57,7 @@ export function includedPageLabel({ title, url }: { title: string; url: string }
 export const BRIDGE_FAILURE_TEXT: Record<BridgeFailure, string> = {
   companion_not_installed: `The local companion is not installed. To install it, ${REINSTALL_HINT}`,
   companion_forbidden: `Chrome refused to start the companion for this extension. To repair it, ${REINSTALL_HINT}`,
-  companion_start_failed: `Chrome could not start the companion. If you moved this checkout or changed Node.js, ${REINSTALL_HINT}`,
+  companion_start_failed: `Chrome could not start the companion. To repair it, ${REINSTALL_HINT}`,
   companion_exited: "The companion stopped unexpectedly, discarding its PAT and SDK session. Choose Try again to start a fresh one.",
   companion_protocol:
     "The companion sent a message this panel does not accept, so the panel disconnected it. " +

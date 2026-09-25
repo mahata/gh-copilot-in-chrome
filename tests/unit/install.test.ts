@@ -1,26 +1,36 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import { companionInstallPaths, runInstaller } from "../../src/companion/install.ts";
+import { bundledRuntimePath, COMPANION_EXECUTABLE_NAME } from "../../src/companion/layout.ts";
 import { EXTENSION_ORIGIN, HOST_NAME } from "../../src/protocol/identity.ts";
 
+let root: string;
 let home: string;
+let buildDirectory: string;
 let messages: { log: string[]; error: string[] };
 let forgetToken: Mock<() => Promise<boolean>>;
 
-const nodePath = "/opt/node 24/bin/node";
-const companionEntryPath = "/Users/octocat/Octo's checkout/src/companion/main.ts";
+function writeBuild(label: string) {
+  const runtimePath = bundledRuntimePath(buildDirectory, "arm64");
+  mkdirSync(dirname(runtimePath), { recursive: true });
+  const executablePath = join(buildDirectory, COMPANION_EXECUTABLE_NAME);
+  writeFileSync(executablePath, `#!/bin/sh\necho '${label}'\n`);
+  writeFileSync(runtimePath, "runtime wrapper");
+  writeFileSync(join(dirname(runtimePath), "runtime.node"), "runtime library");
+  chmodSync(executablePath, 0o755);
+  chmodSync(runtimePath, 0o755);
+}
 
 function install(overrides: Partial<Parameters<typeof runInstaller>[0]> = {}) {
   return runInstaller({
     args: [],
     platform: "darwin",
     home,
-    nodePath,
-    companionEntryPath,
+    buildDirectory,
     store: { forgetToken },
     output: { log: (line) => messages.log.push(line), error: (line) => messages.error.push(line) },
     ...overrides,
@@ -31,92 +41,151 @@ function uninstall() {
   return install({ args: ["--uninstall"] });
 }
 
+function runInstalledCompanion() {
+  return spawnSync(companionInstallPaths(home).executablePath, { encoding: "utf8" }).stdout;
+}
+
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), "installer-home-"));
+  root = mkdtempSync(join(tmpdir(), "installer-"));
+  home = join(root, "home");
+  buildDirectory = join(root, "build");
+  mkdirSync(home);
+  writeBuild("first build");
   messages = { log: [], error: [] };
   forgetToken = vi.fn(async () => false);
 });
 
 afterEach(() => {
-  rmSync(home, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true });
 });
 
 describe("companionInstallPaths", () => {
-  it("places the launcher in Application Support and the host manifest where Chrome looks for it", () => {
+  it("places the companion in Application Support and the host manifest where Chrome looks for it", () => {
     expect(companionInstallPaths("/Users/octocat")).toEqual({
-      launcherDirectory: "/Users/octocat/Library/Application Support/prompt-harbor",
-      launcherPath: "/Users/octocat/Library/Application Support/prompt-harbor/companion",
+      applicationDirectory: "/Users/octocat/Library/Application Support/prompt-harbor",
+      companionDirectory: "/Users/octocat/Library/Application Support/prompt-harbor/companion",
+      executablePath: "/Users/octocat/Library/Application Support/prompt-harbor/companion/prompt-harbor-companion",
       hostManifestPath: `/Users/octocat/Library/Application Support/Google/Chrome/NativeMessagingHosts/${HOST_NAME}.json`,
     });
   });
 });
 
 describe("runInstaller", () => {
-  it("writes an executable launcher that pins this Node binary and the companion entry point", async () => {
+  it("copies the whole build, keeping its executables executable", async () => {
     await expect(install()).resolves.toBe(0);
-    const { launcherPath } = companionInstallPaths(home);
+    const { companionDirectory, executablePath } = companionInstallPaths(home);
+    const runtimePath = bundledRuntimePath(companionDirectory, "arm64");
 
-    expect(readFileSync(launcherPath, "utf8")).toBe(
-      `#!/bin/sh\nexec '/opt/node 24/bin/node' '/Users/octocat/Octo'\\''s checkout/src/companion/main.ts' "$@"\n`,
-    );
-    expect(statSync(launcherPath).mode & 0o777).toBe(0o755);
+    expect(runInstalledCompanion()).toBe("first build\n");
+    expect(statSync(executablePath).mode & 0o777).toBe(0o755);
+    expect(statSync(runtimePath).mode & 0o777).toBe(0o755);
+    expect(readFileSync(join(dirname(runtimePath), "runtime.node"), "utf8")).toBe("runtime library");
   });
 
-  it("registers the launcher with Chrome for the pinned extension only", async () => {
+  it("registers the installed copy with Chrome for the pinned extension only", async () => {
     await install();
-    const { launcherPath, hostManifestPath } = companionInstallPaths(home);
+    const { executablePath, hostManifestPath } = companionInstallPaths(home);
 
     expect(JSON.parse(readFileSync(hostManifestPath, "utf8"))).toEqual({
       name: HOST_NAME,
       description: "Local GitHub Copilot SDK companion for Prompt Harbor",
-      path: launcherPath,
+      path: executablePath,
       type: "stdio",
       allowed_origins: [EXTENSION_ORIGIN],
     });
     expect(statSync(hostManifestPath).mode & 0o777).toBe(0o644);
+    expect(messages.log.join("\n")).toContain(executablePath);
     expect(messages.log.join("\n")).toContain(hostManifestPath);
     expect(messages.error).toEqual([]);
     expect(forgetToken).not.toHaveBeenCalled();
   });
 
-  it("builds a launcher that forwards Chrome's arguments through quoted paths", async () => {
-    const toolDirectory = join(home, "Node's tools");
-    const fakeNodePath = join(toolDirectory, "node");
-    mkdirSync(toolDirectory);
-    writeFileSync(fakeNodePath, `#!/bin/sh\nfor argument in "$@"; do printf '%s\\n' "$argument"; done\n`);
-    chmodSync(fakeNodePath, 0o755);
-    await install({ nodePath: fakeNodePath });
-
-    const launched = spawnSync(companionInstallPaths(home).launcherPath, [EXTENSION_ORIGIN], { encoding: "utf8" });
-    expect(launched.status).toBe(0);
-    expect(launched.stdout).toBe(`${companionEntryPath}\n${EXTENSION_ORIGIN}\n`);
-  });
-
-  it("replaces an earlier install when run again", async () => {
-    await install({ nodePath: "/usr/local/bin/node" });
-    await expect(install()).resolves.toBe(0);
-    expect(readFileSync(companionInstallPaths(home).launcherPath, "utf8")).toContain(`'${nodePath}'`);
-  });
-
-  it("uninstalls both files and the empty launcher directory, leaving other hosts alone", async () => {
+  it("installs a copy that keeps working once the build is gone", async () => {
     await install();
-    const { launcherDirectory, hostManifestPath } = companionInstallPaths(home);
-    const otherHostManifest = join(hostManifestPath, "..", "com.example.other_host.json");
+    rmSync(buildDirectory, { recursive: true });
+
+    expect(runInstalledCompanion()).toBe("first build\n");
+  });
+
+  it("replaces an earlier install completely and leaves no staging copies behind", async () => {
+    await install();
+    const { applicationDirectory, companionDirectory } = companionInstallPaths(home);
+    writeFileSync(join(companionDirectory, "left-by-earlier-build"), "");
+    writeBuild("second build");
+
+    await expect(install()).resolves.toBe(0);
+    expect(runInstalledCompanion()).toBe("second build\n");
+    expect(existsSync(join(companionDirectory, "left-by-earlier-build"))).toBe(false);
+    expect(readdirSync(applicationDirectory)).toEqual(["companion"]);
+  });
+
+  it("replaces the launcher that earlier versions installed in its place", async () => {
+    const { applicationDirectory, companionDirectory } = companionInstallPaths(home);
+    mkdirSync(applicationDirectory, { recursive: true });
+    writeFileSync(companionDirectory, `#!/bin/sh\nexec node checkout/src/companion/main.ts "$@"\n`);
+
+    await expect(install()).resolves.toBe(0);
+    expect(statSync(companionDirectory).isDirectory()).toBe(true);
+    expect(runInstalledCompanion()).toBe("first build\n");
+  });
+
+  it("keeps the earlier install when copying a new build fails", async () => {
+    await install();
+    const { applicationDirectory } = companionInstallPaths(home);
+    writeBuild("second build");
+    const unreadableFile = join(buildDirectory, "unreadable");
+    writeFileSync(unreadableFile, "");
+    chmodSync(unreadableFile, 0o000);
+
+    await expect(install()).rejects.toThrow();
+    expect(runInstalledCompanion()).toBe("first build\n");
+    expect(readdirSync(applicationDirectory)).toEqual(["companion"]);
+  });
+
+  it("clears copies left behind by an interrupted install", async () => {
+    const { applicationDirectory } = companionInstallPaths(home);
+    mkdirSync(join(applicationDirectory, ".staging-interrupted"), { recursive: true });
+    mkdirSync(join(applicationDirectory, ".previous-interrupted"));
+
+    await expect(install()).resolves.toBe(0);
+    expect(readdirSync(applicationDirectory)).toEqual(["companion"]);
+  });
+
+  it("refuses to install without a built companion, without touching the home directory", async () => {
+    await expect(install({ buildDirectory: join(root, "never-built") })).resolves.toBe(1);
+    expect(messages.error.join("\n")).toContain(join(root, "never-built"));
+    expect(messages.error.join("\n")).toContain("pnpm companion:install");
+    expect(readdirSync(home)).toEqual([]);
+  });
+
+  it("uninstalls the companion, its host manifest and the empty application directory, leaving other hosts alone", async () => {
+    await install();
+    const { applicationDirectory, hostManifestPath } = companionInstallPaths(home);
+    const otherHostManifest = join(dirname(hostManifestPath), "com.example.other_host.json");
     writeFileSync(otherHostManifest, "{}");
 
     await expect(uninstall()).resolves.toBe(0);
-    expect(existsSync(launcherDirectory)).toBe(false);
+    expect(existsSync(applicationDirectory)).toBe(false);
     expect(existsSync(hostManifestPath)).toBe(false);
     expect(existsSync(otherHostManifest)).toBe(true);
   });
 
-  it("keeps a launcher directory that holds other files", async () => {
+  it("keeps an application directory that holds other files", async () => {
     await install();
-    const { launcherDirectory } = companionInstallPaths(home);
-    writeFileSync(join(launcherDirectory, "notes.txt"), "mine");
+    const { applicationDirectory } = companionInstallPaths(home);
+    writeFileSync(join(applicationDirectory, "notes.txt"), "mine");
 
     await expect(uninstall()).resolves.toBe(0);
-    expect(readdirSync(launcherDirectory)).toEqual(["notes.txt"]);
+    expect(readdirSync(applicationDirectory)).toEqual(["notes.txt"]);
+  });
+
+  it("uninstalls the launcher that earlier versions installed", async () => {
+    const { applicationDirectory, companionDirectory } = companionInstallPaths(home);
+    mkdirSync(applicationDirectory, { recursive: true });
+    writeFileSync(companionDirectory, "#!/bin/sh\n");
+
+    await expect(uninstall()).resolves.toBe(0);
+    expect(existsSync(applicationDirectory)).toBe(false);
   });
 
   it("uninstalls cleanly when nothing is installed", async () => {
@@ -143,10 +212,10 @@ describe("runInstaller", () => {
   it("still removes the companion but fails with Keychain Access steps when the saved PAT cannot be removed", async () => {
     forgetToken.mockRejectedValue(new Error("security failed"));
     await install();
-    const { launcherDirectory, hostManifestPath } = companionInstallPaths(home);
+    const { applicationDirectory, hostManifestPath } = companionInstallPaths(home);
 
     await expect(uninstall()).resolves.toBe(1);
-    expect(existsSync(launcherDirectory)).toBe(false);
+    expect(existsSync(applicationDirectory)).toBe(false);
     expect(existsSync(hostManifestPath)).toBe(false);
     expect(messages.error.join("\n")).toContain("Keychain Access");
     expect(messages.error.join("\n")).toContain(HOST_NAME);
