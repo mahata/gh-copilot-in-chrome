@@ -58,7 +58,7 @@ async function openPanel({ withCompanion = true, savedToken }: PanelSetup = {}):
       platform: "darwin",
       home,
       buildDirectory: fakeBuildDirectory,
-      store: { forgetToken: async () => false },
+      store: { hasSavedToken: async () => false, forgetToken: async () => false },
       output: { log: () => {}, error: () => {} },
     });
     if (exitCode !== 0) throw new Error("The fake companion could not be installed.");
@@ -193,7 +193,7 @@ test.afterEach(async () => {
 
 test("explains how to install a missing companion, then finds it after installation", async () => {
   const { page, networkRequests, installCompanion } = await openPanel({ withCompanion: false });
-  await expect(page.getByRole("alert")).toContainText("pnpm companion:install");
+  await expect(page.getByRole("alert")).toContainText("install the Prompt Harbor companion package");
   await expect(page.getByRole("alert")).toContainText("companion_not_installed");
   await expect(patField(page)).toBeHidden();
   const tryAgainButton = button(page, "Try again");

@@ -151,13 +151,13 @@ jobs:
         run: pnpm test:companion
 
       - name: Package the companion
-        run: tar -czf "companion-$COMPANION_PLATFORM.tar.gz" -C dist-companion "$COMPANION_PLATFORM"
+        run: node src/companion/package-cli.ts
 
-      - name: Upload companion
+      - name: Upload companion package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: companion-${{ env.COMPANION_PLATFORM }}
-          path: companion-${{ env.COMPANION_PLATFORM }}.tar.gz
+          path: dist-companion/prompt-harbor-companion-*-macos-${{ matrix.arch }}.pkg
           if-no-files-found: error
           overwrite: true
           compression-level: 0

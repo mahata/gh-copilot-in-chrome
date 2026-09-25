@@ -1,11 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { companionBuildDirectory, runBuilder } from "../../src/companion/build.ts";
-import { bundledRuntimePath } from "../../src/companion/layout.ts";
+import { companionBuildDirectory, runBuilder, UNINSTALL_SCRIPT } from "../../src/companion/build.ts";
+import { bundledRuntimePath, COMPANION_EXECUTABLE_NAME, UNINSTALL_SCRIPT_NAME } from "../../src/companion/layout.ts";
 
 const buildCliPath = fileURLToPath(new URL("../../src/companion/build-cli.ts", import.meta.url));
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -29,6 +29,21 @@ describe("companion layout", () => {
 
   it("finds the Copilot runtime for the companion's own architecture beside it", () => {
     expect(bundledRuntimePath("/Companion", "x64")).toBe("/Companion/copilot-runtime/prebuilds/darwin-x64/copilot-runtime");
+  });
+});
+
+describe("uninstall script", () => {
+  it("runs the companion beside it with --uninstall, passing its options on, from any folder", () => {
+    const companionDirectory = join(root, "Application Support", "companion");
+    mkdirSync(companionDirectory, { recursive: true });
+    writeFileSync(join(companionDirectory, UNINSTALL_SCRIPT_NAME), UNINSTALL_SCRIPT);
+    writeFileSync(join(companionDirectory, COMPANION_EXECUTABLE_NAME), '#!/bin/sh\nprintf "%s|" "$@"\n');
+    chmodSync(join(companionDirectory, UNINSTALL_SCRIPT_NAME), 0o755);
+    chmodSync(join(companionDirectory, COMPANION_EXECUTABLE_NAME), 0o755);
+
+    const { status, stdout } = spawnSync(join(companionDirectory, UNINSTALL_SCRIPT_NAME), ["--keep-saved-pat"], { cwd: root, encoding: "utf8" });
+    expect(status).toBe(0);
+    expect(stdout).toBe("--uninstall|--keep-saved-pat|");
   });
 });
 

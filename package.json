@@ -15,6 +15,7 @@
     "test:e2e": "pnpm build && playwright test",
     "check": "pnpm test && pnpm test:companion && pnpm test:e2e",
     "companion:build": "node src/companion/build-cli.ts",
+    "companion:package": "pnpm companion:build && node src/companion/package-cli.ts",
     "companion:install": "pnpm companion:build && node src/companion/install-cli.ts",
     "companion:uninstall": "node src/companion/install-cli.ts --uninstall"
   },

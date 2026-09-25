@@ -6,14 +6,16 @@ which runs in a small companion process on your Mac. It is not affiliated with, 
 by or endorsed by GitHub.
 
 **Current status:** the chat panel, the companion, its macOS Keychain storage for your PAT
-and its installer are built and tested against a scripted fake companion. The companion
-builds into a self-contained executable for Apple silicon or Intel Macs, which runs
-without Node.js, pnpm or this checkout once installed. A [live check](#live-check) with a
+and its installer package are built and tested against a scripted fake companion. The
+companion builds into a self-contained executable for Apple silicon or Intel Macs, and into
+an installer package that installs it for your macOS user, after which it runs without
+Node.js, pnpm or this checkout. A [live check](#live-check) with a
 real fine-grained PAT has also verified authentication, model listing and multipliers,
 usage reporting, page access after a toolbar click, denied page access after a
 cross-origin navigation, authentication failure and sign-out, but with the earlier
 companion that ran from this checkout on Node.js. It has yet to be repeated with the
-self-contained build. There is no signed installer package yet.
+self-contained build. The package is not signed or notarized yet, so it is for testing
+only.
 
 ## Why a local companion
 
@@ -46,7 +48,8 @@ flowchart LR
 - The companion lives only as long as the panel's connection. Closing the panel ends it,
   along with its in-memory PAT and SDK session. **Sign out** deletes the saved PAT, ends the
   companion and starts a fresh one that asks for a PAT. A saved PAT stays in your login
-  keychain until you sign out or uninstall the companion.
+  keychain until you sign out, or until you choose to delete it when you uninstall the
+  companion.
 
 ## Requirements
 
@@ -55,20 +58,42 @@ flowchart LR
   Chrome channels.
 - A GitHub account with Copilot access, and permission to create a fine-grained PAT for
   it.
-- To build and install from this checkout: Node.js 26 and pnpm 10.33.0, on a Mac with the
-  same architecture as the one that will run the companion. Install pnpm separately. The
-  installed companion needs neither.
+- To build the companion or its package from this checkout: Node.js 26 and pnpm 10.33.0,
+  on a Mac with the same architecture as the one that will run the companion. Install
+  pnpm separately. The installed companion needs neither. To build a package that others
+  may install, use a Node.js that keeps its `LICENSE` beside `bin/`, as the nodejs.org
+  tarballs, nvm, fnm, Homebrew and `actions/setup-node` do. With another Node.js, such as
+  the nodejs.org installer package, `THIRD-PARTY-NOTICES.txt` only links to Node.js's
+  license, and the build warns not to distribute it.
 
 ## Install
 
-There is no signed installer package yet, so build the companion and install it from this
-checkout, on the Mac that will run it:
+The companion comes as an installer package for each kind of Mac:
+`prompt-harbor-companion-<version>-macos-arm64.pkg` for Apple silicon and
+`prompt-harbor-companion-<version>-macos-x64.pkg` for Intel. **About This Mac** says which
+kind yours is. There is no release yet, so build the package on a Mac of the same kind,
+or download it from the `companion-darwin-arm64` or `companion-darwin-x64` artifact of a
+CI run:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm build
-pnpm companion:install
+pnpm companion:package
 ```
+
+`pnpm companion:package` builds the companion for this Mac's architecture into
+`dist-companion/darwin-arm64/` or `dist-companion/darwin-x64/`, then packages that build
+as, for example, `dist-companion/prompt-harbor-companion-0.1.0-macos-arm64.pkg`. Open the
+package and follow Installer's steps, or install it from Terminal:
+
+```sh
+installer -pkg dist-companion/prompt-harbor-companion-0.1.0-macos-arm64.pkg -target CurrentUserHomeDirectory
+```
+
+The package is not signed or notarized yet, so macOS cannot tell who built it. Installer
+opens a package you built, but macOS refuses to open one downloaded through a browser,
+such as a CI artifact. Install only a package built from this repository, and install a
+downloaded one with the `installer` command above, which does not ask Gatekeeper.
 
 In Chrome, open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**,
 and select this checkout's `dist/` directory. The manifest's `key` pins the extension ID
@@ -77,31 +102,75 @@ extension from the toolbar, or press Ctrl+Shift+H on Windows/Linux or ⌘+Shift+
 macOS. It should ask for a fine-grained PAT. If it shows an error instead, the error
 names the fix.
 
-`pnpm companion:install` builds the companion for this Mac's architecture into
-`dist-companion/darwin-arm64/` or `dist-companion/darwin-x64/`, then installs a copy of it:
+### What the package installs
+
+The package installs for your macOS user only, so it needs no administrator password. It
+refuses to install on a Mac of the other kind, or on a macOS version older than the
+companion and its runtime were built for (macOS 13.5 with Node.js 26). It has no payload
+of its own: its postinstall script has the companion that the package carries install
+itself, so macOS keeps no package receipt, and `pkgutil --pkgs` does not list it. The
+companion installs:
 
 - `~/Library/Application Support/prompt-harbor/companion/`: the companion, about 250 MB.
-  `prompt-harbor-companion` is a Node.js
-  [single executable application](https://nodejs.org/api/single-executable-applications.html)
-  holding Node.js 26 and the bundled companion code, signed ad hoc. `copilot-runtime/` is
-  the Copilot SDK's runtime package for this architecture
-  (`@github/copilot-sdk-darwin-arm64` or `-darwin-x64`), copied unchanged, so its binaries
-  keep GitHub's signatures.
+  - `prompt-harbor-companion` is a Node.js
+    [single executable application](https://nodejs.org/api/single-executable-applications.html)
+    holding Node.js 26 and the bundled companion code, signed ad hoc.
+  - `copilot-runtime/` is the Copilot SDK's runtime package for this architecture
+    (`@github/copilot-sdk-darwin-arm64` or `-darwin-x64`), copied unchanged, so its
+    binaries keep GitHub's signatures.
+  - `uninstall` removes the companion, as described [below](#uninstall).
+  - `LICENSE.txt` is this project's license. `THIRD-PARTY-NOTICES.txt` gives the license
+    of Node.js, of the packages bundled into the executable and of the runtime package.
+    The runtime package declares the MIT license but includes no license text. Its
+    runtime is not the same binary as the Copilot CLI, whose license limits
+    redistribution, so confirm the terms for redistributing it before publishing a
+    package.
 - `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/io.github.mahata.prompt_harbor.json`:
   registers `prompt-harbor-companion` with Chrome for this extension only. It takes the
   extension ID from `src/protocol/identity.ts`, which the companion checks too and a test
   ties to the manifest's `key`.
 
-The installed copy does not use this checkout, Node.js or pnpm, so moving or deleting the
-checkout does not break it. The installer puts a new copy in place only once it is
-complete, replacing any earlier install, including the launcher that earlier versions
-installed. If an install is interrupted, the next one first puts back the companion it had
-moved aside. Run `pnpm companion:install` again after updating the checkout. To remove the
-companion, run `pnpm companion:uninstall`, which also deletes any saved PAT from your
-login keychain, then remove the extension in `chrome://extensions`.
+The installed copy does not use the package, this checkout, Node.js or pnpm, so deleting
+them does not break it.
 
-`pnpm companion:install` stays a developer command. Once a signed installer package
-exists, instructions for everyone else will use that instead.
+### Update
+
+Install a newer package over the installed one. It replaces the earlier install only once
+the new one is complete: it copies the new companion beside the old one and writes the
+new host manifest beside the old one, then swaps each into place by renaming. If the
+host manifest cannot take the old one's place, it puts the earlier companion back. So a
+failed install leaves the earlier companion working, and a failed first install leaves
+nothing behind. If an install is interrupted, the next one first puts back the companion
+it had moved aside. It also replaces the launcher that earlier development versions
+installed. Updating keeps a saved PAT. A companion that is running keeps running the
+earlier version, so close any open Prompt Harbor side panel and open it again.
+
+### Uninstall
+
+Run the uninstall script in Terminal:
+
+```sh
+"$HOME/Library/Application Support/prompt-harbor/companion/uninstall"
+```
+
+It removes the companion and its Chrome host manifest. If your login keychain holds a
+saved PAT, it first asks whether to delete that too, and keeps it unless you answer `y`.
+It keeps it without asking when it cannot ask, such as when no terminal is attached, and
+`--keep-saved-pat` or `--delete-saved-pat` decides without asking. When it keeps a saved
+PAT, it prints the command that deletes it:
+
+```sh
+security delete-generic-password -s io.github.mahata.prompt_harbor -a fine-grained-pat login.keychain
+```
+
+**Sign out** in the panel also deletes the saved PAT. Then remove the extension in
+`chrome://extensions`.
+
+### From a checkout
+
+`pnpm companion:install` builds the companion and installs it the same way, without a
+package. `pnpm companion:uninstall` uninstalls it like the uninstall script, with the
+same question and options, such as `pnpm companion:uninstall --delete-saved-pat`.
 
 Older development builds used different install and Keychain identifiers. Prompt Harbor
 does not migrate or remove those entries.
@@ -186,7 +255,8 @@ screenshots, logs or CI.
 7. Close the panel and open it again. It should open straight into the chat, connected
    with the saved PAT.
 8. Record any error codes, the Chrome version, the architecture and SDK version that
-   `pnpm companion:install` printed when it built the companion, and the model names and
+   `pnpm companion:package` or `pnpm companion:install` printed when it built the
+   companion, and the model names and
    multipliers in the model menu. Check usage in your GitHub account. Do not record
    tokens, raw server responses or headers.
 9. Choose **Sign out** and run the command from step 3 again. It should report that the
@@ -201,12 +271,12 @@ If something fails:
   `policy.state: "enabled"`, and it does not guess when that field is missing. Record the
   result and stop, because the filter may need revisiting.
 - **`sdk_start_failed`:** the companion could not start the Copilot runtime installed
-  beside it. Run `pnpm companion:install` again to replace a damaged or incomplete
-  install. If it still fails, record the result and stop.
+  beside it. Install the package again to replace a damaged or incomplete install. If it
+  still fails, record the result and stop.
 - **`keychain_read_failed`, `save_failed` or `forget_failed`:** `/usr/bin/security` could
   not read, save or delete the saved PAT. The error says what still works. Record the
   result, and delete any leftover item in Keychain Access.
-- **`companion_*` codes:** the panel names the fix. Most need `pnpm companion:install`
+- **`companion_*` codes:** the panel names the fix. Most need the package installed again,
   followed by **Try again**.
 
 Stop when GitHub denies access. Do not work around a denial with a stored login, a `gh`
@@ -244,8 +314,11 @@ The companion:
 - Runs as a Node.js single executable application that ignores `NODE_OPTIONS`, so the
   environment Chrome starts it with cannot load other code into it. It starts the Copilot
   runtime installed beside it, never one found elsewhere.
-- Exits unless its first argument is this extension's origin, which Chrome passes when this
-  extension starts it. Chrome's host manifest also allows only this extension ID.
+- Talks to Chrome only when its first argument is this extension's origin, which Chrome
+  passes when this extension starts it. Chrome's host manifest also allows only this
+  extension ID. Given `--install <home folder>`, as the package's postinstall script does,
+  or `--uninstall`, as its uninstall script does, it installs or uninstalls itself instead.
+  Otherwise it exits.
 - Accepts six messages: connect with a PAT, optionally remembering it; connect with the
   saved PAT; send a prompt of at most 32,768 characters to a model from this connection's
   list, optionally with a page of at most 4,096 characters of URL, 1,000 of title, 100,000
@@ -260,7 +333,8 @@ The companion:
     cancels that save, so the last request wins.
   - At startup it checks only whether the item exists. It reads the PAT only to connect
     with it, and uses it only if it is still a well-formed fine-grained PAT.
-  - It deletes the item on **Sign out** and on `pnpm companion:uninstall`.
+  - It deletes the item on **Sign out**. Uninstalling the companion deletes it only if you
+    choose to.
   - It runs `/usr/bin/security` with only `HOME` and a system `PATH`, and stops it after
     10 seconds. The PAT goes in on standard input rather than as an argument, the tool's
     error output is discarded, and the PAT is never logged.
@@ -331,15 +405,16 @@ Accepted risks:
 - The runtime keeps its default integration ID, `copilot-developer-cli`. The companion only
   names itself `prompt-harbor` in the SDK's `clientInfo`, which labels the runtime's
   telemetry.
-- The companion is signed ad hoc, not with a Developer ID, and is not notarized, so macOS
-  cannot tell who built it. It also lives in a folder your macOS user can write to. Install
-  only a companion you built from a checkout you trust.
+- The companion is signed ad hoc, not with a Developer ID, and neither it nor its package
+  is notarized, so macOS cannot tell who built them. It also lives in a folder your macOS
+  user can write to. Install only a package built from this repository, by you or by its
+  CI.
 - The SDK is young (1.0.x), so its options, defaults and events may change, including the
   ones this lockdown relies on. `pnpm install --frozen-lockfile` installs the exact version
   pinned in `pnpm-lock.yaml`, `pnpm list @github/copilot-sdk` names it, and the companion
   build carries that version and its runtime. After updating the SDK, review
-  `src/companion/sdk-gateway.ts`, then run `pnpm check`, `pnpm companion:install` and the
-  live check again.
+  `src/companion/sdk-gateway.ts`, then run `pnpm check`, install a new package and repeat
+  the live check.
 
 GitHub receives the PAT, your prompts, any pages you include and the conversation so far with the SDK's system
 instructions, the chosen model, and whatever request metadata and telemetry the official
@@ -358,19 +433,28 @@ pnpm check
 `pnpm check` runs the unit tests, the companion tests, strict TypeScript checking, a
 production build and the browser tests. It needs macOS, because the companion builds only
 there, for the Mac that builds it. `pnpm test:companion` builds the companion into
-`dist-companion/` and checks that build:
+`dist-companion/` and checks that build and a package made from it:
 
 - It is a signed executable for this Mac's architecture that refuses to start unless Chrome
   starts it for the extension, and ignores `NODE_OPTIONS`.
 - It greets Chrome with the SDK version it was built with, in an environment with no
   `PATH`, so without Node.js.
-- It carries the Copilot runtime for its architecture, still signed by GitHub.
+- It carries the Copilot runtime for its architecture, still signed by GitHub, its
+  uninstall script, this project's license and the third-party notices.
 - A copy of it elsewhere connects through its own bundled SDK and runtime. The check sends
   a fake PAT from inside a `sandbox-exec` sandbox that denies network connections, so the
   PAT never leaves the Mac, and expects `auth_failed` with the runtime's temporary
   directory already removed. It first checks that the sandbox really blocks a connection.
-- The installer command installs a copy that starts from its install location, then
-  uninstalls it, in a temporary `HOME`.
+- It installs itself into a temporary home folder and uninstalls through its uninstall
+  script there. The installer command does the same with a copy.
+- The package installs only for the current user and carries the build unchanged.
+  Installed with `installer` into a temporary home folder, it installs a companion that
+  starts, replaces an earlier install completely, fails without touching the earlier
+  install when the new one cannot be put in place, refuses Macs of the other kind and
+  older macOS versions before running anything, and installs an uninstall script that
+  removes everything. `installer` installs into the folder that `CFFIXED_USER_HOME` names,
+  and the tests first install a probe package that only records where it would install,
+  so they stop before installing into your own home folder if that ever changes.
 
 The browser tests:
 
@@ -398,19 +482,21 @@ Actions tab. Unit tests, the type-checked build and the browser tests run on Ubu
 Chromium also reads the profile's `NativeMessagingHosts` directory. Unit tests and the
 type-checked build run in parallel. The E2E job then tests the exact `chrome-extension`
 artifact uploaded by the build, which you can also download from the run and load unpacked
-in place of `dist/`. The companion still comes from `pnpm companion:install` in a checkout
-of the same commit. Playwright output, including layout screenshots, is uploaded as
+in place of `dist/`. The companion still comes from a package or `pnpm companion:install`
+built from the same commit. Playwright output, including layout screenshots, is uploaded as
 `playwright-test-results` even when tests fail. The companion jobs run
 `pnpm test:companion` natively on `macos-latest` (Apple silicon) and `macos-15-intel`
-(Intel), and upload each build as `companion-darwin-arm64` or `companion-darwin-x64`, a
-`.tar.gz` that keeps its file modes. Those builds are signed ad hoc and not notarized, so
-they are for testing only. CI uses no secrets and has read-only repository access.
+(Intel), then package each build and upload the package as `companion-darwin-arm64` or
+`companion-darwin-x64`. Those packages are not signed or notarized, and the companion in
+them is signed ad hoc, so they are for testing only. CI uses no secrets and has read-only
+repository access.
 
 The code is organized as:
 
 - `src/sidepanel/`: the chat panel UI, its native messaging bridge and page capture.
 - `src/companion/`: the companion's entry point, protocol state machine, SDK gateway,
-  Keychain store, frame codec, page prompt, build, install layout and installer.
+  Keychain store, frame codec, page prompt, build, license notices, install layout,
+  installer and installer package.
 - `src/protocol/`: the messages and extension identity shared by both sides.
 
 ## Evidence

@@ -5,7 +5,7 @@ import { HOST_NAME } from "../protocol/identity.ts";
 import { CONNECT_TIMEOUT_MS, MAX_OUTPUT_LENGTH, MAX_PROMPT_LENGTH, TURN_TIMEOUT_MS } from "../protocol/messages.ts";
 import type { ErrorCode, ModelSummary } from "../protocol/messages.ts";
 
-const REINSTALL_HINT = "run pnpm companion:install in this repository's checkout, then choose Try again.";
+const REINSTALL_HINT = "install the Prompt Harbor companion package for this Mac, then choose Try again.";
 const CONNECT_TIMEOUT_SECONDS = CONNECT_TIMEOUT_MS / 1000;
 const TURN_TIMEOUT_MINUTES = TURN_TIMEOUT_MS / 60_000;
 const OUTPUT_LIMIT = formatCount(MAX_OUTPUT_LENGTH);

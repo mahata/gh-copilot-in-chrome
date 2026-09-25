@@ -7,10 +7,17 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { companionBuildDirectory } from "../../src/companion/build.ts";
+import { companionBuildDirectory, UNINSTALL_SCRIPT } from "../../src/companion/build.ts";
 import { createFrameDecoder, encodeFrame } from "../../src/companion/framing.ts";
 import { companionInstallPaths } from "../../src/companion/install.ts";
-import { bundledRuntimePath, COMPANION_EXECUTABLE_NAME } from "../../src/companion/layout.ts";
+import { nodeLicenseUrl } from "../../src/companion/notices.ts";
+import {
+  bundledRuntimePath,
+  COMPANION_EXECUTABLE_NAME,
+  LICENSE_FILE_NAME,
+  NOTICES_FILE_NAME,
+  UNINSTALL_SCRIPT_NAME,
+} from "../../src/companion/layout.ts";
 import { REFUSAL_NOTICE } from "../../src/companion/run.ts";
 import { EXTENSION_ORIGIN } from "../../src/protocol/identity.ts";
 import { PROTOCOL_VERSION } from "../../src/protocol/messages.ts";
@@ -92,6 +99,22 @@ describe("built companion", () => {
     }
   });
 
+  it("carries an uninstall script, this project's license and notices for the third-party software in it", () => {
+    const uninstallScriptPath = join(buildDirectory, UNINSTALL_SCRIPT_NAME);
+    expect(readFileSync(uninstallScriptPath, "utf8")).toBe(UNINSTALL_SCRIPT);
+    expect(statSync(uninstallScriptPath).mode & 0o777).toBe(0o755);
+    expect(readFileSync(join(buildDirectory, LICENSE_FILE_NAME), "utf8")).toBe(readFileSync(new URL("../../LICENSE", import.meta.url), "utf8"));
+
+    const notices = readFileSync(join(buildDirectory, NOTICES_FILE_NAME), "utf8");
+    expect(notices).toContain(`\nNode.js ${process.version}\n`);
+    expect(notices).toContain(
+      existsSync(join(dirname(dirname(process.execPath)), "LICENSE")) ? "Node.js is licensed for use as follows:" : nodeLicenseUrl(process.version),
+    );
+    expect(notices).toContain(`\n@github/copilot-sdk ${String(installedSdkVersion)}\n`);
+    expect(notices).toContain(`\n@github/copilot-sdk-darwin-${process.arch} ${String(installedSdkVersion)}\n`);
+    expect(notices).toContain("\nvscode-jsonrpc ");
+  });
+
   it("refuses to start unless Chrome launches it for the extension", () => {
     const refused = spawnSync(builtExecutablePath, [], { encoding: "utf8", env: {} });
     expect(refused.status).toBe(1);
@@ -155,6 +178,30 @@ describe("built companion", () => {
 
     child.stdin.end();
     await expect(exitCode).resolves.toBe(0);
+  });
+});
+
+describe("self-installing companion", () => {
+  it("installs itself into a home folder and uninstalls through the script beside it", async () => {
+    const home = temporaryDirectory("companion-self-install-home-");
+    const installed = spawnSync(builtExecutablePath, ["--install", home], { encoding: "utf8", env: {} });
+    expect(installed.status).toBe(0);
+    const { applicationDirectory, companionDirectory, executablePath, hostManifestPath } = companionInstallPaths(home);
+    expect(installed.stdout).toContain(executablePath);
+    expect(JSON.parse(readFileSync(hostManifestPath, "utf8"))).toMatchObject({ path: executablePath, allowed_origins: [EXTENSION_ORIGIN] });
+    expect(readdirSync(companionDirectory).sort()).toEqual(readdirSync(buildDirectory).sort());
+
+    const { child, frames, exitCode } = launchCompanion(executablePath, { HOME: home });
+    await vi.waitFor(() => expect(frames).toEqual([expect.objectContaining({ type: "hello", sdkVersion: installedSdkVersion })]), startupTimeout);
+    child.stdin.end();
+    await expect(exitCode).resolves.toBe(0);
+
+    const uninstalled = spawnSync(join(companionDirectory, UNINSTALL_SCRIPT_NAME), [], { encoding: "utf8", env: { HOME: home } });
+    expect(uninstalled.status).toBe(0);
+    expect(uninstalled.stdout).toContain("Removed the Prompt Harbor companion.");
+    expect(uninstalled.stdout).toContain("No saved PAT was found in your macOS login keychain.");
+    expect(existsSync(applicationDirectory)).toBe(false);
+    expect(existsSync(hostManifestPath)).toBe(false);
   });
 });
 

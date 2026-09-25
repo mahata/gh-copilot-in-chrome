@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { companionBuildDirectory } from "./build.ts";
-import { runInstaller } from "./install.ts";
+import { createTerminalConfirm, runInstaller } from "./install.ts";
 import { createKeychainStore } from "./keychain.ts";
 
 process.exitCode = await runInstaller({
@@ -9,5 +9,6 @@ process.exitCode = await runInstaller({
   home: homedir(),
   buildDirectory: companionBuildDirectory(process.arch),
   store: createKeychainStore(),
+  confirm: createTerminalConfirm(process.stdin, process.stdout),
   output: console,
 });
