@@ -21,7 +21,9 @@ const TURN_FAILURE_BY_ERROR_TYPE = new Map<string, TurnFailureCode>([
 
 type Conversation = { session: CopilotSession; model: string };
 
-export function createSdkGateway(): CopilotGateway {
+export type SdkGatewayOptions = { runtimePath?: string };
+
+export function createSdkGateway({ runtimePath }: SdkGatewayOptions = {}): CopilotGateway {
   let closed = false;
   let client: CopilotClient | undefined;
   let privateHome: string | undefined;
@@ -72,9 +74,10 @@ export function createSdkGateway(): CopilotGateway {
         throw new GatewayFailure("sdk_start_failed");
       }
       privateHome = home;
+      const env = { HOME: home, TMPDIR: home, COPILOT_HOME: home, PATH: SYSTEM_PATH };
       const startingClient = new CopilotClient({
         mode: "empty",
-        connection: RuntimeConnection.forStdio({ env: { HOME: home, TMPDIR: home, COPILOT_HOME: home, PATH: SYSTEM_PATH } }),
+        connection: RuntimeConnection.forStdio(runtimePath === undefined ? { env } : { path: runtimePath, env }),
         baseDirectory: home,
         workingDirectory: home,
         gitHubToken: token,

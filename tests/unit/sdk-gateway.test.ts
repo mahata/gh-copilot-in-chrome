@@ -167,6 +167,21 @@ describe("connect", () => {
     await gateway.close();
   });
 
+  it("starts the runtime it is given instead of looking for one in node_modules", async () => {
+    const runtimePath = "/Companion/copilot-runtime/prebuilds/darwin-arm64/copilot-runtime";
+    const gateway = createSdkGateway({ runtimePath });
+    await gateway.connect(token);
+    const client = onlyClient();
+    const home = homeOf(client);
+
+    expect(client.options.connection).toEqual({
+      kind: "stdio",
+      path: runtimePath,
+      env: { HOME: home, TMPDIR: home, COPILOT_HOME: home, PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
+    });
+    await gateway.close();
+  });
+
   it("returns the login and only enabled, well-formed models", async () => {
     sdk.script.models = async () => [
       { id: "gpt-5-mini", name: "GPT-5 mini", policy: { state: "enabled", terms: "" }, billing: { multiplier: 0 } },
