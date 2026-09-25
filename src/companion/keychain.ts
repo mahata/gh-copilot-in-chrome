@@ -12,6 +12,8 @@ const ITEM_NOT_FOUND_EXIT_CODE = 44;
 const ITEM_ARGUMENTS = ["-s", HOST_NAME, "-a", "fine-grained-pat"];
 const LOGIN_KEYCHAIN = "login.keychain";
 
+export const DELETE_SAVED_TOKEN_COMMAND = ["security", "delete-generic-password", ...ITEM_ARGUMENTS, LOGIN_KEYCHAIN].join(" ");
+
 export type SecurityResult = { exitCode: number | null; output: string };
 export type SecurityRunner = (args: readonly string[], input?: string) => Promise<SecurityResult>;
 
@@ -26,7 +28,9 @@ export function createKeychainStore(runSecurity: SecurityRunner = createSecurity
   return {
     async hasSavedToken() {
       const { exitCode } = await runSecurity(["find-generic-password", ...ITEM_ARGUMENTS, LOGIN_KEYCHAIN]);
-      return exitCode === 0;
+      if (exitCode === ITEM_NOT_FOUND_EXIT_CODE) return false;
+      if (exitCode !== 0) throw new Error("The macOS Keychain could not be checked for a saved PAT.");
+      return true;
     },
 
     async loadToken() {

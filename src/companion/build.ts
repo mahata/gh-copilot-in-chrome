@@ -1,12 +1,23 @@
 import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
-import { cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "rolldown";
-import { BUILD_INFO_ASSET, bundledRuntimePath, COMPANION_EXECUTABLE_NAME, RUNTIME_DIRECTORY_NAME } from "./layout.ts";
+import { DELETE_SAVED_PAT_OPTION, KEEP_SAVED_PAT_OPTION, UNINSTALL_OPTION } from "./install.ts";
+import {
+  BUILD_INFO_ASSET,
+  bundledRuntimePath,
+  COMPANION_EXECUTABLE_NAME,
+  LICENSE_FILE_NAME,
+  NOTICES_FILE_NAME,
+  RUNTIME_DIRECTORY_NAME,
+  UNINSTALL_SCRIPT_NAME,
+} from "./layout.ts";
 import type { BuildInfo } from "./layout.ts";
+import { describeNode, describePackage, findPackageDirectories, formatNotices } from "./notices.ts";
+import type { NoticeComponent } from "./notices.ts";
 import { REFUSAL_NOTICE } from "./run.ts";
 
 const SUPPORTED_PLATFORM = "darwin";
@@ -15,8 +26,17 @@ const CODESIGN_PATH = "/usr/bin/codesign";
 const STAGING_SUFFIX = ".staging-";
 const KOFFI_STUB_ID = "\0prompt-harbor:koffi-stub";
 const SMOKE_TEST_TIMEOUT_MS = 10_000;
+const EXECUTABLE_MODE = 0o755;
 const SUCCESS = 0;
 const FAILURE = 1;
+
+export const UNINSTALL_SCRIPT = [
+  "#!/bin/sh",
+  "# Removes the Prompt Harbor companion installed for this macOS user. It asks whether to delete the",
+  `# saved PAT as well, unless ${KEEP_SAVED_PAT_OPTION} or ${DELETE_SAVED_PAT_OPTION} decides.`,
+  `exec "$(dirname "$0")/${COMPANION_EXECUTABLE_NAME}" ${UNINSTALL_OPTION} "$@"`,
+  "",
+].join("\n");
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const companionEntryPath = fileURLToPath(new URL("./main.ts", import.meta.url));
@@ -28,7 +48,7 @@ export type BuilderOptions = {
   output: { log: (line: string) => void; error: (line: string) => void };
 };
 
-class CompanionBuildError extends Error {
+export class CompanionBuildError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "CompanionBuildError";
@@ -49,9 +69,13 @@ export async function runBuilder({ platform, arch, outputDirectory, output }: Bu
     return FAILURE;
   }
   try {
-    const { sdkVersion } = await buildCompanion(arch, outputDirectory);
+    const { sdkVersion, missingNodeLicensePath } = await buildCompanion(arch, outputDirectory);
     output.log(`Built the Prompt Harbor companion for ${SUPPORTED_PLATFORM}-${arch} with Copilot SDK ${sdkVersion}:`);
     output.log(`  ${outputDirectory}`);
+    if (missingNodeLicensePath !== undefined) {
+      output.error(`Node.js's LICENSE is not at ${missingNodeLicensePath}, so ${NOTICES_FILE_NAME} links to it instead of including it.`);
+      output.error("Do not distribute this build. Build with a Node.js that keeps its LICENSE there, such as one from a nodejs.org tarball.");
+    }
     return SUCCESS;
   } catch (error) {
     if (!(error instanceof CompanionBuildError)) throw error;
@@ -62,7 +86,7 @@ export async function runBuilder({ platform, arch, outputDirectory, output }: Bu
 
 // The build runs this Node.js binary's single executable application support, so it produces a
 // companion for this Node.js binary's architecture only.
-async function buildCompanion(arch: string, outputDirectory: string): Promise<BuildInfo> {
+async function buildCompanion(arch: string, outputDirectory: string): Promise<BuildInfo & { missingNodeLicensePath?: string }> {
   const { sdkVersion, runtimePackageDirectory } = await locateSdk(arch);
   await mkdir(dirname(outputDirectory), { recursive: true });
   await removeStaleStagingDirectories(outputDirectory);
@@ -77,7 +101,7 @@ async function buildCompanion(arch: string, outputDirectory: string): Promise<Bu
     const buildInfo: BuildInfo = { sdkVersion };
 
     await mkdir(companionDirectory);
-    await bundleCompanion(bundlePath);
+    const bundledModuleIds = await bundleCompanion(bundlePath);
     await writeFile(buildInfoPath, JSON.stringify(buildInfo));
     await writeFile(
       seaConfigPath,
@@ -103,11 +127,16 @@ async function buildCompanion(arch: string, outputDirectory: string): Promise<Bu
       verbatimSymlinks: true,
     });
     await checkRuntimeFiles(bundledRuntimePath(companionDirectory, arch));
+    await writeFile(join(companionDirectory, UNINSTALL_SCRIPT_NAME), UNINSTALL_SCRIPT);
+    await chmod(join(companionDirectory, UNINSTALL_SCRIPT_NAME), EXECUTABLE_MODE);
+    await copyFile(join(repositoryRoot, "LICENSE"), join(companionDirectory, LICENSE_FILE_NAME));
+    const node = await describeNode(process.execPath, process.version);
+    await writeFile(join(companionDirectory, NOTICES_FILE_NAME), await thirdPartyNotices(node, bundledModuleIds, runtimePackageDirectory));
     checkCompanionRefusesToStartAlone(executablePath);
 
     await rm(outputDirectory, { recursive: true, force: true });
     await rename(companionDirectory, outputDirectory);
-    return buildInfo;
+    return node.licenseText === undefined ? { ...buildInfo, missingNodeLicensePath: node.licensePath } : buildInfo;
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
@@ -153,10 +182,19 @@ async function bundleCompanion(bundlePath: string) {
     },
   });
   try {
-    await bundle.write({ file: bundlePath, format: "esm", codeSplitting: false });
+    const { output } = await bundle.write({ file: bundlePath, format: "esm", codeSplitting: false });
+    return output.flatMap((file) => (file.type === "chunk" ? file.moduleIds : []));
   } finally {
     await bundle.close();
   }
+}
+
+async function thirdPartyNotices(node: NoticeComponent, bundledModuleIds: readonly string[], runtimePackageDirectory: string) {
+  const bundledPackages = await Promise.all(
+    (await findPackageDirectories(bundledModuleIds)).map((directory) => describePackage(directory, "Bundled into the companion executable.")),
+  );
+  const runtimePackage = await describePackage(runtimePackageDirectory, `Included unchanged as ${RUNTIME_DIRECTORY_NAME}/.`);
+  return formatNotices([node, ...bundledPackages.sort((first, second) => first.name.localeCompare(second.name)), runtimePackage]);
 }
 
 // The SDK needs koffi only for its in-process runtime. The companion always starts the runtime as
@@ -190,7 +228,7 @@ function checkCompanionRefusesToStartAlone(executablePath: string) {
   }
 }
 
-function runTool(command: string, args: readonly string[]) {
+export function runTool(command: string, args: readonly string[]) {
   const { status, stderr, error } = spawnSync(command, args, { encoding: "utf8" });
   if (status === SUCCESS) return;
   const detail = error?.message ?? stderr.trim();

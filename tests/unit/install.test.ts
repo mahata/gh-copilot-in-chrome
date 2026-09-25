@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
-import { companionInstallPaths, runInstaller } from "../../src/companion/install.ts";
+import { PassThrough } from "node:stream";
+import { companionInstallPaths, createTerminalConfirm, runInstaller, SAVED_PAT_QUESTION } from "../../src/companion/install.ts";
+import type { Confirm } from "../../src/companion/install.ts";
+import { createKeychainStore, DELETE_SAVED_TOKEN_COMMAND } from "../../src/companion/keychain.ts";
+import type { SecurityRunner } from "../../src/companion/keychain.ts";
 import { bundledRuntimePath, COMPANION_EXECUTABLE_NAME } from "../../src/companion/layout.ts";
 import { EXTENSION_ORIGIN, HOST_NAME } from "../../src/protocol/identity.ts";
 
@@ -12,6 +16,7 @@ let root: string;
 let home: string;
 let buildDirectory: string;
 let messages: { log: string[]; error: string[] };
+let hasSavedToken: Mock<() => Promise<boolean>>;
 let forgetToken: Mock<() => Promise<boolean>>;
 
 function writeBuild(label: string) {
@@ -31,14 +36,19 @@ function install(overrides: Partial<Parameters<typeof runInstaller>[0]> = {}) {
     platform: "darwin",
     home,
     buildDirectory,
-    store: { forgetToken },
+    store: { hasSavedToken, forgetToken },
     output: { log: (line) => messages.log.push(line), error: (line) => messages.error.push(line) },
     ...overrides,
   });
 }
 
-function uninstall() {
-  return install({ args: ["--uninstall"] });
+function uninstall(options: string[] = [], confirm?: Confirm) {
+  return install({ args: ["--uninstall", ...options], confirm });
+}
+
+function hostManifestCopies() {
+  const hostManifestDirectory = dirname(companionInstallPaths(home).hostManifestPath);
+  return existsSync(hostManifestDirectory) ? readdirSync(hostManifestDirectory).filter((entry) => entry.startsWith(".")) : [];
 }
 
 function runInstalledCompanion() {
@@ -59,6 +69,7 @@ beforeEach(() => {
   mkdirSync(home);
   writeBuild("first build");
   messages = { log: [], error: [] };
+  hasSavedToken = vi.fn(async () => false);
   forgetToken = vi.fn(async () => false);
 });
 
@@ -101,10 +112,23 @@ describe("runInstaller", () => {
       allowed_origins: [EXTENSION_ORIGIN],
     });
     expect(statSync(hostManifestPath).mode & 0o777).toBe(0o644);
+    expect(hostManifestCopies()).toEqual([]);
     expect(messages.log.join("\n")).toContain(executablePath);
     expect(messages.log.join("\n")).toContain(hostManifestPath);
     expect(messages.error).toEqual([]);
+    expect(hasSavedToken).not.toHaveBeenCalled();
     expect(forgetToken).not.toHaveBeenCalled();
+  });
+
+  it("clears host manifest copies that an interrupted install left beside the manifest", async () => {
+    const { hostManifestPath } = companionInstallPaths(home);
+    const interruptedCopy = join(dirname(hostManifestPath), `.${HOST_NAME}.json.interrupted`);
+    mkdirSync(dirname(hostManifestPath), { recursive: true });
+    writeFileSync(interruptedCopy, "{");
+
+    await expect(install()).resolves.toBe(0);
+    expect(existsSync(interruptedCopy)).toBe(false);
+    expect(JSON.parse(readFileSync(hostManifestPath, "utf8"))).toMatchObject({ name: HOST_NAME });
   });
 
   it("installs a copy that keeps working once the build is gone", async () => {
@@ -145,6 +169,36 @@ describe("runInstaller", () => {
     await expect(install()).rejects.toThrow();
     expect(runInstalledCompanion()).toBe("first build\n");
     expect(readdirSync(applicationDirectory)).toEqual(["companion"]);
+  });
+
+  it("puts the earlier companion back when the new host manifest cannot take the old one's place", async () => {
+    await install();
+    const { applicationDirectory, hostManifestPath } = companionInstallPaths(home);
+    rmSync(hostManifestPath);
+    mkdirSync(join(hostManifestPath, "blocked"), { recursive: true });
+    writeBuild("second build");
+
+    await expect(install()).rejects.toThrow();
+    expect(runInstalledCompanion()).toBe("first build\n");
+    expect(readdirSync(applicationDirectory)).toEqual(["companion"]);
+    expect(hostManifestCopies()).toEqual([]);
+  });
+
+  it("leaves nothing behind when a first install cannot copy the build", async () => {
+    makeBuildUncopyable();
+
+    await expect(install()).rejects.toThrow();
+    expect(existsSync(companionInstallPaths(home).applicationDirectory)).toBe(false);
+    expect(existsSync(companionInstallPaths(home).hostManifestPath)).toBe(false);
+  });
+
+  it("leaves nothing behind when a first install cannot register with Chrome", async () => {
+    const { applicationDirectory, hostManifestPath } = companionInstallPaths(home);
+    mkdirSync(join(hostManifestPath, "blocked"), { recursive: true });
+
+    await expect(install()).rejects.toThrow();
+    expect(existsSync(applicationDirectory)).toBe(false);
+    expect(hostManifestCopies()).toEqual([]);
   });
 
   it("puts back the companion that an interrupted install moved aside, even when the next copy fails", async () => {
@@ -241,42 +295,180 @@ describe("runInstaller", () => {
     expect(messages.error).toEqual([]);
   });
 
-  it("removes the saved PAT from the Keychain when uninstalling", async () => {
-    forgetToken.mockResolvedValue(true);
+  it("removes stray host manifest copies when uninstalling", async () => {
     await install();
+    const { hostManifestPath } = companionInstallPaths(home);
+    writeFileSync(join(dirname(hostManifestPath), `.${HOST_NAME}.json.interrupted`), "{");
 
     await expect(uninstall()).resolves.toBe(0);
+    expect(hostManifestCopies()).toEqual([]);
+  });
+});
+
+describe("runInstaller and a saved PAT", () => {
+  beforeEach(async () => {
+    hasSavedToken.mockResolvedValue(true);
+    forgetToken.mockResolvedValue(true);
+    await install();
+    messages = { log: [], error: [] };
+  });
+
+  it("asks before anything is removed, and deletes the saved PAT when the answer is yes", async () => {
+    const { applicationDirectory, hostManifestPath } = companionInstallPaths(home);
+    const confirm = vi.fn(async (question: string) => {
+      expect(question).toBe(SAVED_PAT_QUESTION);
+      expect(existsSync(applicationDirectory)).toBe(true);
+      expect(existsSync(hostManifestPath)).toBe(true);
+      return true;
+    });
+
+    await expect(uninstall([], confirm)).resolves.toBe(0);
+    expect(confirm).toHaveBeenCalledTimes(1);
     expect(forgetToken).toHaveBeenCalledTimes(1);
-    expect(messages.log).toContain("Removed the saved PAT from your macOS login keychain.");
+    expect(existsSync(applicationDirectory)).toBe(false);
+    expect(messages.log).toEqual(["Removed the Prompt Harbor companion.", "Removed the saved PAT from your macOS login keychain."]);
     expect(messages.error).toEqual([]);
   });
 
-  it("says so when the Keychain holds no saved PAT", async () => {
+  it("keeps the saved PAT when the answer is no, and says how to delete it later", async () => {
+    await expect(uninstall([], async () => false)).resolves.toBe(0);
+    expect(forgetToken).not.toHaveBeenCalled();
+    expect(existsSync(companionInstallPaths(home).applicationDirectory)).toBe(false);
+    expect(messages.log.join("\n")).toContain("Kept the PAT saved in your macOS login keychain.");
+    expect(messages.log).toContain(`  ${DELETE_SAVED_TOKEN_COMMAND}`);
+    expect(messages.log.join("\n")).toContain(`delete the ${HOST_NAME} item in Keychain Access`);
+  });
+
+  it("keeps the saved PAT without asking when nobody can answer", async () => {
     await expect(uninstall()).resolves.toBe(0);
+    expect(forgetToken).not.toHaveBeenCalled();
+    expect(messages.log).toContain(`  ${DELETE_SAVED_TOKEN_COMMAND}`);
+  });
+
+  it("keeps the saved PAT without asking when told to keep it", async () => {
+    const confirm = vi.fn(async () => true);
+
+    await expect(uninstall(["--keep-saved-pat"], confirm)).resolves.toBe(0);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(forgetToken).not.toHaveBeenCalled();
+    expect(messages.log).toContain(`  ${DELETE_SAVED_TOKEN_COMMAND}`);
+  });
+
+  it("deletes the saved PAT without asking when told to delete it", async () => {
+    const confirm = vi.fn(async () => false);
+
+    await expect(uninstall(["--delete-saved-pat"], confirm)).resolves.toBe(0);
+    expect(confirm).not.toHaveBeenCalled();
     expect(forgetToken).toHaveBeenCalledTimes(1);
+    expect(messages.log).toContain("Removed the saved PAT from your macOS login keychain.");
+  });
+
+  it("neither asks nor deletes when the Keychain holds no saved PAT", async () => {
+    hasSavedToken.mockResolvedValue(false);
+    const confirm = vi.fn(async () => true);
+
+    await expect(uninstall([], confirm)).resolves.toBe(0);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(forgetToken).not.toHaveBeenCalled();
     expect(messages.log).toContain("No saved PAT was found in your macOS login keychain.");
+  });
+
+  it("still uninstalls, and says where to look, when the Keychain cannot be checked", async () => {
+    hasSavedToken.mockRejectedValue(new Error("security failed"));
+
+    await expect(uninstall([], async () => true)).resolves.toBe(0);
+    expect(forgetToken).not.toHaveBeenCalled();
+    expect(existsSync(companionInstallPaths(home).applicationDirectory)).toBe(false);
+    expect(messages.error).toContain(`  ${DELETE_SAVED_TOKEN_COMMAND}`);
+    expect(messages.error.join("\n")).toContain(`${HOST_NAME} item`);
+    expect(messages.error.join("\n")).not.toContain("security failed");
+  });
+
+  it.each([
+    ["times out", null],
+    ["cannot ask for the keychain to be unlocked", 36],
+  ])("does not claim there is no saved PAT when the real store's security tool %s", async (_description, exitCode) => {
+    const runSecurity = vi.fn<SecurityRunner>(async () => ({ exitCode, output: "" }));
+    const confirm = vi.fn(async () => true);
+
+    await expect(install({ args: ["--uninstall"], store: createKeychainStore(runSecurity), confirm })).resolves.toBe(0);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(runSecurity).toHaveBeenCalledTimes(1);
+    expect(messages.log.join("\n")).not.toContain("No saved PAT was found");
+    expect(messages.error[0]).toMatch(/^Could not check your macOS login keychain for a saved PAT/);
+  });
+
+  it("tells the real store's missing item apart from a failed check", async () => {
+    const runSecurity = vi.fn<SecurityRunner>(async () => ({ exitCode: 44, output: "" }));
+
+    await expect(install({ args: ["--uninstall"], store: createKeychainStore(runSecurity), confirm: async () => true })).resolves.toBe(0);
+    expect(messages.log).toContain("No saved PAT was found in your macOS login keychain.");
+    expect(messages.error).toEqual([]);
   });
 
   it("still removes the companion but fails with Keychain Access steps when the saved PAT cannot be removed", async () => {
     forgetToken.mockRejectedValue(new Error("security failed"));
-    await install();
     const { applicationDirectory, hostManifestPath } = companionInstallPaths(home);
 
-    await expect(uninstall()).resolves.toBe(1);
+    await expect(uninstall(["--delete-saved-pat"])).resolves.toBe(1);
     expect(existsSync(applicationDirectory)).toBe(false);
     expect(existsSync(hostManifestPath)).toBe(false);
     expect(messages.error.join("\n")).toContain("Keychain Access");
     expect(messages.error.join("\n")).toContain(HOST_NAME);
     expect(messages.error.join("\n")).not.toContain("security failed");
   });
+});
 
+describe("runInstaller arguments", () => {
   it.each([
     ["outside macOS", { platform: "linux" as const }, /macOS only/],
     ["with an unknown argument", { args: ["--force"] }, /Usage: pnpm companion:install/],
+    ["with an unknown uninstall option", { args: ["--uninstall", "--force"] }, /--keep-saved-pat \| --delete-saved-pat/],
+    ["with both saved PAT options", { args: ["--uninstall", "--keep-saved-pat", "--delete-saved-pat"] }, /Usage/],
   ])("refuses to run %s without touching the home directory", async (_description, overrides, message) => {
     await expect(install(overrides)).resolves.toBe(1);
     expect(messages.error.join("\n")).toMatch(message);
     expect(readdirSync(home)).toEqual([]);
+    expect(hasSavedToken).not.toHaveBeenCalled();
     expect(forgetToken).not.toHaveBeenCalled();
+  });
+});
+
+describe("createTerminalConfirm", () => {
+  function terminal(isTTY: boolean) {
+    const input = Object.assign(new PassThrough(), { isTTY });
+    const output = Object.assign(new PassThrough(), { isTTY });
+    let shown = "";
+    output.on("data", (chunk: Buffer) => (shown += chunk.toString()));
+    return { input, output, shown: () => shown };
+  }
+
+  it("offers no way to ask unless both input and output are a terminal", () => {
+    expect(createTerminalConfirm(terminal(false).input, terminal(true).output)).toBeUndefined();
+    expect(createTerminalConfirm(terminal(true).input, terminal(false).output)).toBeUndefined();
+  });
+
+  it.each([
+    ["y\n", true],
+    ["Yes\n", true],
+    ["\n", false],
+    ["no\n", false],
+    ["yep\n", false],
+  ])("treats the answer %j as %s", async (answer, expected) => {
+    const { input, output, shown } = terminal(true);
+    const confirm = createTerminalConfirm(input, output);
+    const confirmed = confirm?.("Delete it too? [y/N] ");
+    input.write(answer);
+
+    await expect(confirmed).resolves.toBe(expected);
+    expect(shown()).toBe("Delete it too? [y/N] ");
+  });
+
+  it("treats input that ends without an answer as no", async () => {
+    const { input, output } = terminal(true);
+    const confirmed = createTerminalConfirm(input, output)?.("Delete it too? [y/N] ");
+    input.end();
+
+    await expect(confirmed).resolves.toBe(false);
   });
 });

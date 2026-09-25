@@ -1,30 +1,50 @@
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { getAsset, isSea } from "node:sea";
+import { createTerminalConfirm } from "./install.ts";
 import { createKeychainStore } from "./keychain.ts";
 import { BUILD_INFO_ASSET, bundledRuntimePath } from "./layout.ts";
 import { runCompanion } from "./run.ts";
 import { createSdkGateway } from "./sdk-gateway.ts";
+import { isSelfInstallerCommand, runSelfInstaller } from "./self-install.ts";
 import { isBoundedField } from "../protocol/messages.ts";
 
 const UNKNOWN_SDK_VERSION = "unknown";
 
 // A built companion is a single executable application with the Copilot runtime beside it.
-// Run from a checkout, the SDK finds its runtime in node_modules instead.
+// Run from a checkout, the SDK finds its runtime in node_modules instead, and installing is
+// left to pnpm companion:install, because only a built companion can copy itself.
 const isBuiltCompanion = isSea();
-const runtimePath = isBuiltCompanion ? bundledRuntimePath(dirname(process.execPath), process.arch) : undefined;
+const args = process.argv.slice(2);
 
-const companion = runCompanion({
-  stdin: process.stdin,
-  stdout: process.stdout,
-  stderr: process.stderr,
-  args: process.argv.slice(2),
-  createGateway: () => createSdkGateway({ runtimePath }),
-  store: createKeychainStore(),
-  sdkVersion: await readSdkVersion(isBuiltCompanion ? readBuiltSdkVersion : readCheckoutSdkVersion),
-});
-process.once("SIGTERM", () => void companion.shutdown());
-process.exitCode = await companion.done;
+process.exitCode = isBuiltCompanion && isSelfInstallerCommand(args) ? await installOrUninstall() : await serveChrome();
+
+function installOrUninstall() {
+  return runSelfInstaller({
+    args,
+    executablePath: process.execPath,
+    home: homedir(),
+    store: createKeychainStore(),
+    confirm: createTerminalConfirm(process.stdin, process.stdout),
+    output: console,
+  });
+}
+
+async function serveChrome() {
+  const runtimePath = isBuiltCompanion ? bundledRuntimePath(dirname(process.execPath), process.arch) : undefined;
+  const companion = runCompanion({
+    stdin: process.stdin,
+    stdout: process.stdout,
+    stderr: process.stderr,
+    args,
+    createGateway: () => createSdkGateway({ runtimePath }),
+    store: createKeychainStore(),
+    sdkVersion: await readSdkVersion(isBuiltCompanion ? readBuiltSdkVersion : readCheckoutSdkVersion),
+  });
+  process.once("SIGTERM", () => void companion.shutdown());
+  return companion.done;
+}
 
 async function readSdkVersion(read: () => Promise<unknown>) {
   try {

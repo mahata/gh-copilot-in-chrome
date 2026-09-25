@@ -21,12 +21,16 @@ describe("keychain credential store", () => {
       expect(runSecurity).toHaveBeenCalledExactlyOnceWith(["find-generic-password", ...itemArguments, loginKeychain]);
     });
 
+    it("reports no saved token when no item exists", async () => {
+      await expect(createKeychainStore(fakeSecurity({ exitCode: 44 })).hasSavedToken()).resolves.toBe(false);
+    });
+
     it.each([
-      ["no item exists", 44],
       ["the lookup fails", 51],
+      ["the keychain refuses to be asked", 36],
       ["the tool cannot run", null],
-    ])("reports no saved token when %s", async (_description, exitCode) => {
-      await expect(createKeychainStore(fakeSecurity({ exitCode })).hasSavedToken()).resolves.toBe(false);
+    ])("rejects, instead of claiming there is no saved token, when %s", async (_description, exitCode) => {
+      await expect(createKeychainStore(fakeSecurity({ exitCode })).hasSavedToken()).rejects.toThrow(Error);
     });
   });
 

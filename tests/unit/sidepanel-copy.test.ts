@@ -45,12 +45,13 @@ describe("side panel copy", () => {
   });
 
   it("tells the user how to install a missing companion and retry", () => {
-    expect(BRIDGE_FAILURE_TEXT.companion_not_installed).toContain("pnpm companion:install");
+    expect(BRIDGE_FAILURE_TEXT.companion_not_installed).toContain("companion package");
     expect(BRIDGE_FAILURE_TEXT.companion_not_installed).toContain("Try again");
+    expect(BRIDGE_FAILURE_TEXT.companion_not_installed).not.toContain("pnpm");
   });
 
   it("tells the user to reinstall a companion that Chrome cannot start", () => {
-    expect(BRIDGE_FAILURE_TEXT.companion_start_failed).toContain("pnpm companion:install");
+    expect(BRIDGE_FAILURE_TEXT.companion_start_failed).toContain("companion package");
     expect(BRIDGE_FAILURE_TEXT.companion_start_failed).toContain("Try again");
     expect(BRIDGE_FAILURE_TEXT.companion_start_failed).not.toContain("Node.js");
   });
