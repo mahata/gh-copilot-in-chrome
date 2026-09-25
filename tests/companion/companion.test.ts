@@ -1,23 +1,28 @@
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { constants, cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CopilotClient, RuntimeConnection } from "@github/copilot-sdk";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { companionBuildDirectory } from "../../src/companion/build.ts";
-import { createFrameDecoder } from "../../src/companion/framing.ts";
+import { createFrameDecoder, encodeFrame } from "../../src/companion/framing.ts";
 import { companionInstallPaths } from "../../src/companion/install.ts";
 import { bundledRuntimePath, COMPANION_EXECUTABLE_NAME } from "../../src/companion/layout.ts";
 import { REFUSAL_NOTICE } from "../../src/companion/run.ts";
-import { SYSTEM_PATH } from "../../src/companion/system-path.ts";
 import { EXTENSION_ORIGIN } from "../../src/protocol/identity.ts";
 import { PROTOCOL_VERSION } from "../../src/protocol/messages.ts";
 
 const GITHUB_TEAM_ID = "VEKTX9H2N7";
 const MACH_O_ARCHITECTURES: Partial<Record<string, string>> = { arm64: "arm64", x64: "x86_64" };
+const SANDBOX_EXEC_PATH = "/usr/bin/sandbox-exec";
+// Denies every network connection except to Unix domain sockets, so a fake PAT never leaves this Mac.
+const NO_NETWORK_PROFILE = "(version 1)(allow default)(deny network-outbound)(allow network-outbound (remote unix-socket))";
+const fakeToken = `github_pat_${"Z".repeat(82)}`;
 const startupTimeout = { timeout: 10_000 };
+const connectTimeout = { timeout: 20_000 };
 const buildDirectory = companionBuildDirectory(process.arch);
 const builtExecutablePath = join(buildDirectory, COMPANION_EXECUTABLE_NAME);
 const installCliPath = fileURLToPath(new URL("../../src/companion/install-cli.ts", import.meta.url));
@@ -44,14 +49,27 @@ function temporaryDirectory(prefix: string) {
   return directory;
 }
 
-function launchCompanion(executablePath: string, env: NodeJS.ProcessEnv) {
-  const child = spawn(executablePath, [EXTENSION_ORIGIN], { stdio: ["pipe", "pipe", "inherit"], env });
+function launchCompanion(executablePath: string, env: NodeJS.ProcessEnv, { sandboxed = false } = {}) {
+  const command = sandboxed ? SANDBOX_EXEC_PATH : executablePath;
+  const args = sandboxed ? ["-p", NO_NETWORK_PROFILE, executablePath, EXTENSION_ORIGIN] : [EXTENSION_ORIGIN];
+  const child = spawn(command, args, { stdio: ["pipe", "pipe", "inherit"], env });
   launchedCompanions.push(child);
   const frames: unknown[] = [];
   const decoder = createFrameDecoder((frame) => frames.push(frame));
   child.stdout.on("data", (chunk: Buffer) => decoder.push(chunk));
   const exitCode = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
   return { child, frames, exitCode };
+}
+
+function connectsTo(port: number, { sandboxed }: { sandboxed: boolean }) {
+  const probe = [
+    "--eval",
+    `require("node:net").connect(${port}, "127.0.0.1").on("connect", () => process.exit(0)).on("error", () => process.exit(1));`,
+  ];
+  const { status } = sandboxed
+    ? spawnSync(SANDBOX_EXEC_PATH, ["-p", NO_NETWORK_PROFILE, process.execPath, ...probe], { timeout: startupTimeout.timeout })
+    : spawnSync(process.execPath, probe, { timeout: startupTimeout.timeout });
+  return status === 0;
 }
 
 function codesign(args: string[]) {
@@ -108,29 +126,35 @@ describe("built companion", () => {
     expect(existsSync(markerPath)).toBe(false);
   });
 
-  it("carries a Copilot runtime that starts from wherever the companion is copied, here without a token", async () => {
+  it("connects from a copy elsewhere through its own SDK and Copilot runtime, which reject a fake PAT", async () => {
+    const server = createServer((socket) => socket.destroy());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = server.address() as AddressInfo;
+      expect(connectsTo(port, { sandboxed: false })).toBe(true);
+      expect(connectsTo(port, { sandboxed: true })).toBe(false);
+    } finally {
+      server.close();
+    }
+
     const copy = join(temporaryDirectory("companion-copy-"), "companion");
     cpSync(buildDirectory, copy, { recursive: true, mode: constants.COPYFILE_FICLONE });
-    const runtimeHome = temporaryDirectory("copilot-runtime-home-");
-    const client = new CopilotClient({
-      mode: "empty",
-      connection: RuntimeConnection.forStdio({
-        path: bundledRuntimePath(copy, process.arch),
-        env: { HOME: runtimeHome, TMPDIR: runtimeHome, COPILOT_HOME: runtimeHome, PATH: SYSTEM_PATH },
-      }),
-      baseDirectory: runtimeHome,
-      workingDirectory: runtimeHome,
-      useLoggedInUser: false,
-      logLevel: "error",
-    });
-    try {
-      await client.start();
-      expect(await client.getAuthStatus()).toMatchObject({ isAuthenticated: false });
-      expect(await client.stop()).toEqual([]);
-    } catch (error) {
-      await client.forceStop();
-      throw error;
-    }
+    const home = temporaryDirectory("companion-home-");
+    const runtimeParentDirectory = temporaryDirectory("companion-tmpdir-");
+    const { child, frames, exitCode } = launchCompanion(
+      join(copy, COMPANION_EXECUTABLE_NAME),
+      { HOME: home, TMPDIR: runtimeParentDirectory },
+      { sandboxed: true },
+    );
+    await vi.waitFor(() => expect(frames).toHaveLength(1), startupTimeout);
+
+    child.stdin.write(encodeFrame({ type: "connect", token: fakeToken, remember: false }));
+    await vi.waitFor(() => expect(frames).toHaveLength(2), connectTimeout);
+    expect(frames[1]).toEqual({ type: "error", stage: "connect", code: "auth_failed" });
+    expect(readdirSync(runtimeParentDirectory)).toEqual([]);
+
+    child.stdin.end();
+    await expect(exitCode).resolves.toBe(0);
   });
 });
 

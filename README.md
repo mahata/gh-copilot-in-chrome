@@ -95,7 +95,8 @@ names the fix.
 The installed copy does not use this checkout, Node.js or pnpm, so moving or deleting the
 checkout does not break it. The installer puts a new copy in place only once it is
 complete, replacing any earlier install, including the launcher that earlier versions
-installed. Run `pnpm companion:install` again after updating the checkout. To remove the
+installed. If an install is interrupted, the next one first puts back the companion it had
+moved aside. Run `pnpm companion:install` again after updating the checkout. To remove the
 companion, run `pnpm companion:uninstall`, which also deletes any saved PAT from your
 login keychain, then remove the extension in `chrome://extensions`.
 
@@ -363,9 +364,11 @@ there, for the Mac that builds it. `pnpm test:companion` builds the companion in
   starts it for the extension, and ignores `NODE_OPTIONS`.
 - It greets Chrome with the SDK version it was built with, in an environment with no
   `PATH`, so without Node.js.
-- It carries the Copilot runtime for its architecture, still signed by GitHub, and that
-  runtime starts from a copy elsewhere. This check starts the real runtime without a token,
-  so it only answers that it is not authenticated.
+- It carries the Copilot runtime for its architecture, still signed by GitHub.
+- A copy of it elsewhere connects through its own bundled SDK and runtime. The check sends
+  a fake PAT from inside a `sandbox-exec` sandbox that denies network connections, so the
+  PAT never leaves the Mac, and expects `auth_failed` with the runtime's temporary
+  directory already removed. It first checks that the sandbox really blocks a connection.
 - The installer command installs a copy that starts from its install location, then
   uninstalls it, in a temporary `HOME`.
 

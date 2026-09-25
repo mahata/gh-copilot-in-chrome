@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,6 +43,13 @@ function uninstall() {
 
 function runInstalledCompanion() {
   return spawnSync(companionInstallPaths(home).executablePath, { encoding: "utf8" }).stdout;
+}
+
+function makeBuildUncopyable() {
+  const unreadableFile = join(buildDirectory, "unreadable");
+  writeFileSync(unreadableFile, "");
+  chmodSync(unreadableFile, 0o000);
+  return () => rmSync(unreadableFile);
 }
 
 beforeEach(() => {
@@ -133,21 +140,62 @@ describe("runInstaller", () => {
     await install();
     const { applicationDirectory } = companionInstallPaths(home);
     writeBuild("second build");
-    const unreadableFile = join(buildDirectory, "unreadable");
-    writeFileSync(unreadableFile, "");
-    chmodSync(unreadableFile, 0o000);
+    makeBuildUncopyable();
 
     await expect(install()).rejects.toThrow();
     expect(runInstalledCompanion()).toBe("first build\n");
     expect(readdirSync(applicationDirectory)).toEqual(["companion"]);
   });
 
-  it("clears copies left behind by an interrupted install", async () => {
-    const { applicationDirectory } = companionInstallPaths(home);
-    mkdirSync(join(applicationDirectory, ".staging-interrupted"), { recursive: true });
-    mkdirSync(join(applicationDirectory, ".previous-interrupted"));
+  it("puts back the companion that an interrupted install moved aside, even when the next copy fails", async () => {
+    await install();
+    const { applicationDirectory, companionDirectory } = companionInstallPaths(home);
+    renameSync(companionDirectory, join(applicationDirectory, ".previous-interrupted"));
+    mkdirSync(join(applicationDirectory, ".staging-interrupted"));
+    writeBuild("second build");
+    makeBuildUncopyable();
+
+    await expect(install()).rejects.toThrow();
+    expect(runInstalledCompanion()).toBe("first build\n");
+    expect(readdirSync(applicationDirectory)).toEqual(["companion"]);
+  });
+
+  it("finishes the update that an interrupted install started", async () => {
+    await install();
+    const { applicationDirectory, companionDirectory } = companionInstallPaths(home);
+    renameSync(companionDirectory, join(applicationDirectory, ".previous-interrupted"));
+    writeBuild("second build");
 
     await expect(install()).resolves.toBe(0);
+    expect(runInstalledCompanion()).toBe("second build\n");
+    expect(readdirSync(applicationDirectory)).toEqual(["companion"]);
+  });
+
+  it("keeps companions moved aside while none is in place until a new copy is in place", async () => {
+    const { applicationDirectory } = companionInstallPaths(home);
+    mkdirSync(join(applicationDirectory, ".previous-one"), { recursive: true });
+    mkdirSync(join(applicationDirectory, ".previous-two"));
+    mkdirSync(join(applicationDirectory, ".staging-interrupted"));
+    const repairBuild = makeBuildUncopyable();
+
+    await expect(install()).rejects.toThrow();
+    expect(readdirSync(applicationDirectory).sort()).toEqual([".previous-one", ".previous-two"]);
+
+    repairBuild();
+    await expect(install()).resolves.toBe(0);
+    expect(runInstalledCompanion()).toBe("first build\n");
+    expect(readdirSync(applicationDirectory)).toEqual(["companion"]);
+  });
+
+  it("clears copies that interrupted installs left beside an installed companion, even when the new copy fails", async () => {
+    await install();
+    const { applicationDirectory } = companionInstallPaths(home);
+    mkdirSync(join(applicationDirectory, ".staging-interrupted"));
+    mkdirSync(join(applicationDirectory, ".previous-interrupted"));
+    makeBuildUncopyable();
+
+    await expect(install()).rejects.toThrow();
+    expect(runInstalledCompanion()).toBe("first build\n");
     expect(readdirSync(applicationDirectory)).toEqual(["companion"]);
   });
 
